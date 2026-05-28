@@ -24,8 +24,8 @@ UninstallDisplayIcon={app}\RAMDetect.exe
 
 [Files]
 Source: "..\dist\RAMDetect\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\Configure_RAMDetect_Analyst_Server.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\README_ANALYST_DEPLOYMENT.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\deployment\scripts\Configure_RAMDetect_Analyst_Server.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\docs\deployment\README_ANALYST_DEPLOYMENT.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\RAMDetect Analyst"; Filename: "{app}\RAMDetect.exe"
@@ -57,6 +57,7 @@ begin
       False);
   end;
 end;
+
 
 
 
