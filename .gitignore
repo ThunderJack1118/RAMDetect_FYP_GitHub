@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+.venv-build/
+
+# Build outputs
+build/
+dist/
+*.spec.bak*
+*.bak*
+*.log
+
+# RAMDetect runtime data
+logs/
+dumps/
+reports/
+output/
+ui/data/sessions/*.json
+ramdetect/ui/data/sessions/*.json
+ui/data/scan_history.json
+ramdetect/ui/data/scan_history.json
+
+# PTM runtime repository data
+RAMDetect_PTM_ReportRepository/
+repository.db
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+data/uploads/
+data/reports/
+
+# Secrets and local runtime config
+.env
+*.env
+RAMDetect_RUNTIME.env
+*.token
+*secret*
+*password*
+
+# Installer/release artifacts
+*.exe
+*.msi
+*.zip
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

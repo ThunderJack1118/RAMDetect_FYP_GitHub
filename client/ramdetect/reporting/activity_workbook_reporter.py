@@ -1,0 +1,399 @@
+"""
+activity_workbook_reporter.py
+-----------------------------
+Beautiful Excel workbook export for RAMDetect Activity Monitor.
+
+This reporter is for staff/activity monitoring evidence, not ScanSession ML
+feature export. It writes one .xlsx workbook containing all Activity Monitor
+tabs:
+
+- Summary
+- Login History
+- Analysis History
+- File Access
+- Report History
+- Full Audit Trail
+
+It does not import ML, parsers, FeatureMapper, Random Forest, Autoencoder, or
+verdict logic. It is reporting/output only.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Mapping
+
+
+def _bytes_str(path: str) -> str:
+    try:
+        n = os.path.getsize(path)
+        for unit in ("B", "KB", "MB", "GB"):
+            if n < 1024:
+                return f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{n:.1f} GB"
+    except Exception:
+        return "—"
+
+
+def _safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace("\x00", " ")
+    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    return " ".join(text.split())
+
+
+def _safe_sheet_name(name: str, used: set[str]) -> str:
+    invalid = ['\\', '/', '*', '[', ']', ':', '?']
+    clean = str(name or "Sheet")
+    for ch in invalid:
+        clean = clean.replace(ch, " ")
+    clean = " ".join(clean.split()).strip() or "Sheet"
+    clean = clean[:31]
+
+    base = clean
+    i = 2
+    while clean in used:
+        suffix = f" {i}"
+        clean = f"{base[:31-len(suffix)]}{suffix}"
+        i += 1
+    used.add(clean)
+    return clean
+
+
+def _infer_headers(rows: List[Dict[str, Any]]) -> List[str]:
+    headers: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row.keys():
+            if key not in seen:
+                headers.append(key)
+                seen.add(key)
+    return headers
+
+
+class ActivityWorkbookReporter:
+    """Generate a styled .xlsx workbook from Activity Monitor tab rows."""
+
+    @staticmethod
+    def generate(
+        tabs: Mapping[str, List[Dict[str, Any]]],
+        metadata: Dict[str, Any],
+        path: str,
+        fname: str | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            try:
+                from openpyxl import Workbook
+                from openpyxl.chart import BarChart, Reference
+                from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+                from openpyxl.utils import get_column_letter
+                from openpyxl.worksheet.table import Table, TableStyleInfo
+            except ImportError as exc:
+                raise RuntimeError("openpyxl is required. Install it with: pip install openpyxl") from exc
+
+            path = str(path)
+            if not path.lower().endswith(".xlsx"):
+                path += ".xlsx"
+            fname = fname or os.path.basename(path)
+
+            wb = Workbook()
+            default = wb.active
+            wb.remove(default)
+
+            palette = {
+                "bg_dark": "0F172A",
+                "navy": "111827",
+                "card": "1E293B",
+                "cyan": "06B6D4",
+                "cyan_dark": "0E7490",
+                "blue": "2563EB",
+                "green": "22C55E",
+                "red": "EF4444",
+                "amber": "F59E0B",
+                "muted": "64748B",
+                "text": "E2E8F0",
+                "white": "FFFFFF",
+                "grid": "CBD5E1",
+                "light": "F8FAFC",
+                "light_alt": "EEF2F7",
+                "header_blue": "1D4ED8",
+            }
+
+            thin_grid = Side(style="thin", color=palette["grid"])
+            table_border = Border(left=thin_grid, right=thin_grid, top=thin_grid, bottom=thin_grid)
+
+            # ── Summary sheet ─────────────────────────────────────────────
+            ws = wb.create_sheet("Summary")
+            ws.sheet_properties.tabColor = palette["cyan"]
+            ws.freeze_panes = "A8"
+            ws.sheet_view.showGridLines = False
+
+            ws.merge_cells("A1:H1")
+            ws["A1"] = "RAMDetect Activity Monitor Workbook"
+            ws["A1"].font = Font(name="Segoe UI", size=20, bold=True, color=palette["white"])
+            ws["A1"].fill = PatternFill("solid", fgColor=palette["bg_dark"])
+            ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[1].height = 32
+
+            ws.merge_cells("A2:H2")
+            ws["A2"] = "Staff usage, login activity, file access, analysis history, report history, and full audit trail"
+            ws["A2"].font = Font(name="Segoe UI", size=10, color="B6C2D5")
+            ws["A2"].fill = PatternFill("solid", fgColor=palette["bg_dark"])
+            ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+
+            meta_pairs = [
+                ("Generated At", metadata.get("generated_at")),
+                ("Generated By", metadata.get("generated_by")),
+                ("Role", metadata.get("role")),
+                ("Machine", metadata.get("machine")),
+                ("User Filter", metadata.get("user_filter")),
+                ("Search Filter", metadata.get("search_filter")),
+            ]
+            start_row = 4
+            for i, (label, value) in enumerate(meta_pairs):
+                r = start_row + i
+                ws.cell(r, 1, label)
+                ws.cell(r, 2, _safe_text(value) or "—")
+                ws.cell(r, 1).font = Font(name="Segoe UI", bold=True, color=palette["muted"])
+                ws.cell(r, 2).font = Font(name="Segoe UI", color="111827")
+                ws.cell(r, 1).alignment = Alignment(horizontal="left")
+                ws.cell(r, 2).alignment = Alignment(horizontal="left")
+            ws.column_dimensions["A"].width = 18
+            ws.column_dimensions["B"].width = 42
+
+            counts = {name: len(rows or []) for name, rows in tabs.items()}
+            total_records = sum(counts.values())
+            card_data = [
+                ("Login Events", counts.get("Login History", 0), palette["green"]),
+                ("Analysis Events", counts.get("Analysis History", 0), palette["blue"]),
+                ("File Events", counts.get("File Access", 0), palette["amber"]),
+                ("Report Events", counts.get("Report History", 0), palette["cyan"]),
+                ("Full Audit Trail", counts.get("Full Audit Trail", 0), palette["red"]),
+                ("Workbook Rows", total_records, palette["card"]),
+            ]
+
+            # Dashboard cards: C4:H7
+            card_positions = [("C4", "D5"), ("E4", "F5"), ("G4", "H5"), ("C7", "D8"), ("E7", "F8"), ("G7", "H8")]
+            for (title, value, colour), (top_left, bottom_right) in zip(card_data, card_positions):
+                ws.merge_cells(f"{top_left}:{bottom_right}")
+                cell = ws[top_left]
+                cell.value = f"{title}\n{value}"
+                cell.fill = PatternFill("solid", fgColor=colour)
+                cell.font = Font(name="Segoe UI", size=12, bold=True, color=palette["white"])
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = Border(left=thin_grid, right=thin_grid, top=thin_grid, bottom=thin_grid)
+
+            ws["A11"] = "Sheet Summary"
+            ws["A11"].font = Font(name="Segoe UI", size=14, bold=True, color="111827")
+
+            summary_headers = ["Sheet", "Records", "Purpose"]
+            for c, header in enumerate(summary_headers, start=1):
+                cell = ws.cell(12, c, header)
+                cell.font = Font(name="Segoe UI", bold=True, color=palette["white"])
+                cell.fill = PatternFill("solid", fgColor=palette["header_blue"])
+                cell.border = table_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            descriptions = {
+                "Login History": "User login, logout, application opened, and application closed events.",
+                "Analysis History": "RAMDetect analysis started, completed, failed, or result-viewing actions.",
+                "File Access": "RAM dump selection, import, acquisition, access, and file/hash evidence.",
+                "Report History": "Generated, opened, and exported report records.",
+                "Full Audit Trail": "Complete activity-monitoring audit log for the selected user/filter scope.",
+            }
+            for r, (sheet, count) in enumerate(counts.items(), start=13):
+                ws.cell(r, 1, sheet)
+                ws.cell(r, 2, count)
+                ws.cell(r, 3, descriptions.get(sheet, "Activity Monitor records."))
+                for c in range(1, 4):
+                    cell = ws.cell(r, c)
+                    cell.border = table_border
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
+                    cell.fill = PatternFill("solid", fgColor=palette["light"] if r % 2 else palette["light_alt"])
+
+            # Top actions from full audit trail
+            full_rows = tabs.get("Full Audit Trail", []) or []
+            action_counts: dict[str, int] = {}
+            for row in full_rows:
+                action = _safe_text(row.get("Action") or row.get("action") or "")
+                if action:
+                    action_counts[action] = action_counts.get(action, 0) + 1
+
+            ws["E11"] = "Top Actions"
+            ws["E11"].font = Font(name="Segoe UI", size=14, bold=True, color="111827")
+            ws["E12"] = "Action"
+            ws["F12"] = "Count"
+            for c in (5, 6):
+                cell = ws.cell(12, c)
+                cell.font = Font(name="Segoe UI", bold=True, color=palette["white"])
+                cell.fill = PatternFill("solid", fgColor=palette["header_blue"])
+                cell.border = table_border
+                cell.alignment = Alignment(horizontal="center")
+
+            for r, (action, count) in enumerate(sorted(action_counts.items(), key=lambda x: x[1], reverse=True)[:10], start=13):
+                ws.cell(r, 5, action)
+                ws.cell(r, 6, count)
+                for c in (5, 6):
+                    cell = ws.cell(r, c)
+                    cell.border = table_border
+                    cell.fill = PatternFill("solid", fgColor=palette["light"] if r % 2 else palette["light_alt"])
+
+            if action_counts:
+                chart = BarChart()
+                chart.type = "bar"
+                chart.style = 10
+                chart.title = "Top Activity Actions"
+                chart.y_axis.title = "Action"
+                chart.x_axis.title = "Count"
+                data = Reference(ws, min_col=6, min_row=12, max_row=12 + min(10, len(action_counts)))
+                cats = Reference(ws, min_col=5, min_row=13, max_row=12 + min(10, len(action_counts)))
+                chart.add_data(data, titles_from_data=True)
+                chart.set_categories(cats)
+                chart.height = 6.5
+                chart.width = 12
+                ws.add_chart(chart, "E25")
+
+            for col, width in {
+                "A": 18, "B": 26, "C": 38, "D": 18,
+                "E": 26, "F": 12, "G": 18, "H": 18
+            }.items():
+                ws.column_dimensions[col].width = width
+
+            # ── Data sheets ────────────────────────────────────────────────
+            used_names = {"Summary"}
+            for tab_name, rows in tabs.items():
+                rows = rows or []
+                sheet_name = _safe_sheet_name(tab_name, used_names)
+                ws_data = wb.create_sheet(sheet_name)
+                ws_data.sheet_view.showGridLines = False
+                ws_data.sheet_properties.tabColor = palette["cyan_dark"]
+                ws_data.freeze_panes = "A4"
+
+                headers = _infer_headers(rows)
+                if not headers:
+                    headers = ["Message"]
+                    rows = [{"Message": "No records found for this tab/filter."}]
+
+                # Title
+                last_col = max(1, len(headers))
+                end_col = get_column_letter(last_col)
+                ws_data.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+                ws_data["A1"] = f"RAMDetect — {tab_name}"
+                ws_data["A1"].font = Font(name="Segoe UI", size=16, bold=True, color=palette["white"])
+                ws_data["A1"].fill = PatternFill("solid", fgColor=palette["bg_dark"])
+                ws_data["A1"].alignment = Alignment(horizontal="center", vertical="center")
+                ws_data.row_dimensions[1].height = 26
+
+                ws_data.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+                ws_data["A2"] = (
+                    f"Generated: {metadata.get('generated_at', '—')} | "
+                    f"User filter: {metadata.get('user_filter', '—')} | "
+                    f"Search: {metadata.get('search_filter', '') or '—'} | "
+                    f"Records: {len(rows)}"
+                )
+                ws_data["A2"].font = Font(name="Segoe UI", size=9, color=palette["muted"])
+                ws_data["A2"].alignment = Alignment(horizontal="center", vertical="center")
+
+                # Headers
+                for c, header in enumerate(headers, start=1):
+                    cell = ws_data.cell(3, c, header)
+                    cell.font = Font(name="Segoe UI", bold=True, color=palette["white"])
+                    cell.fill = PatternFill("solid", fgColor=palette["header_blue"])
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    cell.border = table_border
+
+                # Body
+                for r_idx, row in enumerate(rows, start=4):
+                    fill = PatternFill("solid", fgColor=palette["light"] if r_idx % 2 else palette["light_alt"])
+                    for c_idx, header in enumerate(headers, start=1):
+                        val = _safe_text(row.get(header, ""))
+                        cell = ws_data.cell(r_idx, c_idx, val)
+                        cell.fill = fill
+                        cell.border = table_border
+                        cell.font = Font(name="Segoe UI", size=9, color="111827")
+                        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+                        # Colour-code important fields
+                        if header.lower() in {"action", "verdict", "status"}:
+                            val_u = val.upper()
+                            if "FAILED" in val_u or "SUSPICIOUS" in val_u or "ERROR" in val_u:
+                                cell.font = Font(name="Segoe UI", size=9, bold=True, color=palette["red"])
+                            elif "SUCCESS" in val_u or "CLEAN" in val_u or "COMPLETED" in val_u:
+                                cell.font = Font(name="Segoe UI", size=9, bold=True, color=palette["green"])
+                            elif "OPENED" in val_u or "STARTED" in val_u or "GENERATED" in val_u:
+                                cell.font = Font(name="Segoe UI", size=9, bold=True, color=palette["cyan_dark"])
+
+                # Table object
+                table_ref = f"A3:{end_col}{max(4, len(rows) + 3)}"
+                table_name = "tbl_" + "".join(ch for ch in sheet_name.title() if ch.isalnum())[:20]
+                if not table_name or table_name == "tbl_":
+                    table_name = f"tblSheet{len(wb.worksheets)}"
+                try:
+                    tab = Table(displayName=table_name, ref=table_ref)
+                    style = TableStyleInfo(
+                        name="TableStyleMedium2",
+                        showFirstColumn=False,
+                        showLastColumn=False,
+                        showRowStripes=True,
+                        showColumnStripes=False,
+                    )
+                    tab.tableStyleInfo = style
+                    ws_data.add_table(tab)
+                except Exception:
+                    ws_data.auto_filter.ref = table_ref
+
+                # Column widths
+                for c_idx, header in enumerate(headers, start=1):
+                    letter = get_column_letter(c_idx)
+                    header_l = header.lower()
+                    if "path" in header_l or "details" in header_l:
+                        width = 42
+                    elif "hash" in header_l:
+                        width = 34
+                    elif "timestamp" in header_l or "date" in header_l:
+                        width = 20
+                    elif "file" in header_l or "report" in header_l:
+                        width = 30
+                    elif "action" in header_l:
+                        width = 22
+                    else:
+                        width = max(12, min(24, len(str(header)) + 4))
+                    ws_data.column_dimensions[letter].width = width
+
+                ws_data.row_dimensions[3].height = 22
+
+            # Workbook properties
+            wb.properties.creator = str(metadata.get("generated_by") or "RAMDetect")
+            wb.properties.title = "RAMDetect Activity Monitor Workbook"
+            wb.properties.subject = "Staff usage and audit trail"
+            wb.properties.created = datetime.now()
+            wb.properties.modified = datetime.now()
+
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            wb.save(path)
+
+            return {
+                "success": True,
+                "path": path,
+                "filename": fname,
+                "size_str": _bytes_str(path),
+                "error": "",
+                "sheets": ["Summary"] + list(tabs.keys()),
+                "records": total_records,
+            }
+
+        except Exception as exc:
+            return {
+                "success": False,
+                "path": path,
+                "filename": fname or os.path.basename(str(path)),
+                "size_str": "—",
+                "error": str(exc),
+                "sheets": [],
+                "records": 0,
+            }

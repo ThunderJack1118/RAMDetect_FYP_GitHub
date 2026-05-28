@@ -1,0 +1,11 @@
+to Windows build variations. It's also possible the System process itself is paged out, or that my reliance on string searching for the `System` process is too limited. Comparing my approach to Volatility's use of KDBG may provide insight for a more robust method.
+
+
+**Exploring Scanner Alternatives**
+
+I'm now weighing the best course of action. Debugging the custom scanner seems like a good first step, perhaps loosening the constraints of the `Proc` tag check. Alternatively, I'm considering implementing a "KDBG" scan, inspired by Volatility, but it's a more complex undertaking. A fallback to Volatility might be the most pragmatic option for immediate results, even though it's not ideal. Providing a specific Device Tree Blob isn't feasible, unfortunately.
+
+
+**Rethinking Scan Parameters**
+
+I've realized the "Triple Lock" approach was overly restrictive, likely filtering out valid `EPROCESS` structures. The previous "dumb" scan found a false positive, not the actual target. I'm now modifying the scanner to ignor

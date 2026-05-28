@@ -1,0 +1,24 @@
+ext to it. This suggests we might have a slightly wrong DTB or a weird Windows Build version.
+
+### **Step 1: Run Volatility (Corrected Command)**
+
+Your previous attempt failed with "path not found" because of how Windows handles forward slashes (`/`) in some terminals.
+
+Run this **exact command** (using backslashes `\`):
+
+```powershell
+vol -f "dumps\THUNDERJACK_20260102_204204.dmp" windows.info
+
+```
+
+### **Step 2: Read the Output**
+
+Volatility will verify the file header and scan the Kernel Debugger Block (KDBG). Look for these two lines:
+
+1. **`DtB`** (or `DirectoryTableBase`): This is the **Master Key**.
+2. **`NtBuildLab`** (or `SystemRoot`): This tells us the **Exact Windows Version** (e.g., `19041`, `22621`).
+
+### **Step 3: What to do next**
+
+* **If the DTB is different** (e.g., `0x1ae000`): Use that new value in your tool.
+* **If the DTB is the same (`0x3b0000`)**: Then your tool's **Offsets** are still missing the specific profile for this Windows Build. Share the `NtBuildLab` number with me, and I will

@@ -1,0 +1,5 @@
+{
+  "random_forest_threshold": 0.5,
+  "decision_mode": "ml_only",
+  "note": "Runtime RF threshold calibration for RAMDetect-native ML-only inference. Copy this file to models/ml_threshold.json."
+}

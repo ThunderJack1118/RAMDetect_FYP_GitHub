@@ -1,0 +1,245 @@
+acquisition:
+  dumpit_path: tools/DumpIt.exe
+  output_dir: C:/Users/annsi/Downloads/GITHUB/RAMDetect_Client_Package/dumps
+  timeout_seconds: 300
+  auto_hash: true
+  hash_algorithms:
+  - md5
+  - sha256
+  compress_dumps: false
+  metadata_format: json
+  silent_mode: true
+paths:
+  models_dir: models/
+  reports_dir: reports/
+  logs_dir: logs/
+  datasets_dir: datasets/
+  dumpit_exe: tools/DumpIt.exe
+  dumps_dir: dumps/
+  temp_dir: temp/
+ml:
+  default_model: hybrid
+  rf_weight: 0.75
+  ae_weight: 0.25
+  ae_threshold: 0.00405541
+  rf_model_path: models/random_forest.pkl
+  ae_model_path: models/autoencoder.pkl
+  feature_mapper_path: models/feature_mapper.pkl
+  random_forest:
+    n_estimators: 300
+    max_depth: null
+    min_samples_split: 2
+    min_samples_leaf: 1
+    random_state: 42
+    n_jobs: -1
+    class_weight: balanced
+    max_features: sqrt
+  autoencoder:
+    architecture:
+    - 54
+    - 64
+    - 32
+    - 16
+    - 32
+    - 64
+    - 54
+    activation: relu
+    epochs: 80
+    batch_size: 128
+    learning_rate: 0.001
+    validation_split: 0.2
+    early_stopping_patience: 10
+    anomaly_threshold_percentile: 99.0
+  hybrid:
+    rf_weight: 0.75
+    ae_weight: 0.25
+    confidence_threshold: 0.5
+  training:
+    test_size: 0.15
+    cross_validation_folds: 5
+    random_state: 42
+    save_best_model: true
+    evaluation_metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - roc_auc
+    val_size: 0.15
+  feature_mode: canonical54
+  base_feature_count: 54
+  fused_feature_count: 55
+analysis:
+  auto_start: true
+  enable_logging: true
+  auto_save_results: true
+  include_raw_features: false
+  default_modules:
+  - process
+reports:
+  default_format: pdf
+  pdf_page_size: A4
+  header_text: RAMDetect Forensic Report
+  organisation: ''
+theme:
+  name: dark
+  font_size: 14
+  accent_color: '#06b6d4'
+app:
+  name: RAMDetect
+  version: 1.0.0
+  author: Your Name
+  description: ML-Powered RAM Forensics Analysis Tool
+features:
+  extract_all: true
+  categories:
+    process_features: true
+    thread_features: true
+    dll_features: true
+    handle_features: true
+    injection_features: true
+    pe_features: true
+  normalization: standard
+  handle_missing: median
+reporting:
+  formats:
+    json: true
+    csv: true
+    pdf: true
+  pdf:
+    include_charts: true
+    include_feature_importance: true
+    include_process_tree: true
+    page_size: A4
+    orientation: portrait
+  visualization:
+    style: seaborn
+    dpi: 300
+    color_scheme: viridis
+    figure_size:
+    - 10
+    - 6
+gui:
+  theme: dark
+  window_size:
+  - 1280
+  - 800
+  show_splash_screen: true
+  enable_tooltips: true
+  auto_refresh: true
+  refresh_interval: 500
+  max_log_lines: 1000
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
+  console_output: true
+  file_output: true
+  max_file_size: 10MB
+  backup_count: 5
+  colored_logs: true
+performance:
+  max_memory_usage: 4GB
+  chunk_size: 1048576
+  parallel_processing: true
+  max_processes: 4
+  cache_size: 1GB
+security:
+  verify_dump_integrity: true
+  encrypt_reports: false
+  sanitize_paths: true
+  redact_sensitive_info: false
+advanced:
+  debug_mode: false
+  profile_performance: false
+  experimental_features: false
+  verbose_output: false
+official_canonical_rf_ae:
+  enabled: true
+  algorithm: Dai-style RF-AE feature fusion
+  ml_only: true
+  dataset: datasets/Obfuscated-MalMem2022.csv
+  feature_mode: canonical54
+  base_features: 54
+  fused_features: 55
+  canonical_54_features: 54
+  native_features: 0
+  ae_trained_on_clean_only: true
+  ae_threshold_percentile: 99.0
+  ae_threshold: 0.00405541
+  rf_threshold: 0.5
+  model_dir: models
+  model_files:
+    feature_mapper: models/feature_mapper.pkl
+    autoencoder: models/autoencoder.pkl
+    autoencoder_keras: models/autoencoder.keras
+    random_forest: models/random_forest.pkl
+  training_summary:
+    rows: 58596
+    train_rows: 41016
+    val_rows: 8790
+    test_rows: 8790
+    train_accuracy: 1.0
+    val_accuracy: 1.0
+    test_accuracy: 0.9998862343572241
+    test_f1: 0.9998862472983734
+    test_auc: 1.0
+  note: Official runtime model trained on Obfuscated-MalMem2022/CIC-style 54 canonical
+    features with AE MSE fused as the 55th RF feature. Restart RAMDetect after changing
+    this file because MLBridge caches models.
+project_dependencies:
+  gui_export:
+    packages:
+    - openpyxl>=3.1.0
+    purpose: Excel workbook export for artifact reports
+environment_setup:
+  python_version: 3.10+
+  pip_upgrade_command: python -m pip install --upgrade pip
+  notes: Update pip manually inside the active virtual environment; pip is not listed
+    as a runtime package dependency.
+volatility_exceptions:
+  enabled: true
+  verdict_effect: false
+  affects_rf_threshold: false
+  affects_feature_mapper: false
+  affects_autoencoder_mse: false
+  affects_report_only_artifacts: false
+  allowed_components:
+    handle_parser:
+      enabled: true
+      allowed_plugin: windows.handles
+      purpose: Volatility-assisted handle enumeration only
+      reason: Native Windows handle-table parsing has not yet been fully overcome
+        in the current FYP prototype.
+      future_work: Replace with native RAMDetect handle-table parsing.
+    acquisition_metadata_resolver:
+      enabled: true
+      allowed_plugin: windows.info.Info
+      allowed_files:
+      - ramdetect/ui/bridge/acquisition_bridge.py
+      - ramdetect/acquisition/metadata_reader.py
+      - ramdetect/utils/find_dtb.py
+      purpose: DTB/CR3, OS build, architecture, kernel base, and profile metadata
+        resolution only
+      reason: Reliable native DTB/profile recovery is still difficult across Windows
+        dump formats and builds.
+      future_work: Replace with fully native DTB and OS profile resolver.
+case_management:
+  enabled: true
+  require_login: true
+  database_url: postgresql+psycopg2://ramdetect_app:changeme@localhost:5432/ramdetect_db
+  roles:
+  - Admin
+  - Analyst
+  - Viewer
+  default_admin_username: admin
+activity_monitoring:
+  enabled: true
+  require_login: true
+  auto_register_workstations: true
+  xlsx_export: true
+  central_activity_sync: true
+global_database_example:
+  postgresql_url_example: postgresql+psycopg2://ramdetect_app:CHANGE_ME@SERVER_IP:5432/ramdetect_db
+  note: Use this URL in case_management.database_url on every RAMDetect PC for central
+    PTM monitoring.

@@ -1,0 +1,24 @@
+{
+  "evaluated_at": "2026-05-20T18:28:26.857561+00:00",
+  "data_path": "datasets\\Obfuscated-MalMem2022.csv",
+  "feature_mode": "canonical54",
+  "rows": 58596,
+  "base_features": 54,
+  "fused_features": 55,
+  "metrics": {
+    "threshold": 0.5,
+    "accuracy": 0.9999658679773363,
+    "precision": 0.9999317406143344,
+    "recall": 1.0,
+    "f1": 0.9999658691422916,
+    "auc_roc": 0.999999998835005,
+    "tn": 29296,
+    "fp": 2,
+    "fn": 0,
+    "tp": 29298
+  },
+  "artefacts": {
+    "evaluation_replay": "models\\evaluation_replay.csv",
+    "evaluation_report": "models\\evaluation_report.json"
+  }
+}

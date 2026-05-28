@@ -1,0 +1,11 @@
+nt.  I'm exploring several checks, especially for the "Physical Address Limit," to ensure the found value is valid. This should prevent the large, invalid DTB values.
+
+
+**Strengthening the DTB Search**
+
+My focus has shifted to directly incorporating several key sanity checks into the `find_dtb.py` script. The "Physical Address" check, ensuring the DTB value is within the file size, is now implemented. I'm also exploring architecture-specific checks, such as reserved bit validation on x64 systems. While the KDBG scan is the gold standard, I'm prioritizing enhancements to the existing "System Process" scan, to deliver a robust and efficient solution without the complexity of a full KDBG implementation.
+
+
+**Adding Enhanced Validation**
+
+I've implemented the `DTB < FileSize` check, and it's already proving effective. It immediately filters out those wildly incorrect values. I'm prioritizing adding a `DTB > 0x1000` check, because low memory is usually reserved, ensuring a wider range of validity. As an additional 

@@ -1,0 +1,11 @@
+ries, and at least one must point to itself. This comprehensive approach ensures that I'm able to get the right structures, even with a corrupted header.
+
+
+**Designing a KDBG Hunt**
+
+I'm now integrating the KDBG search with the PML4 scan for a robust approach.  The current plan is to prioritize the PML4 self-reference technique and fall back to searching for the KDBG signature.  I'm now checking the offsets of the _KDDEBUGGER_DATA64 structure and verifying the crucial offsets for the CR3 address within the KDBG data. The goal is to maximize the chances of retrieving the CR3, regardless of potential header corruption.
+
+
+**Developing the Final Tool**
+
+I'm now implementing the `scan_cr3.py` script. It iterates physical pages, checking if each looks like a PML4 table by validating entries and confirming self-reference. The focus is on a reliable method to locate the CR3, the key to unlocking the dump, especially given the header's unreliability. I'm focusing on "Zero Reliance", relying on the PML4 scan as a solid

@@ -1,0 +1,12 @@
+suspect offset inaccuracies or the string's non-adjacency are the root causes of the prior failures. The new goal is to demonstrate the tool's effectiveness.
+
+
+**Prioritizing Demo Success**
+
+I'm thinking we can salvage the demo. Since the user has `vol.exe` available, I'll suggest using it as a one-time step to retrieve the key manually. We can then hardcode or manually enter the key to proceed and verify the rest of the pipeline's functionality. Afterwards, we can circle back to debugging the scanner. The KDBG scan is actually an easier avenue than Process scanning; let me check the offsets and recent Windows versions.
+
+
+
+**Reframing Demo Strategy**
+
+I've determined that the "Triple Lock" approach's failure points to incorrect offsets in this image. No candidates satisfied the (PID=4 AND Sanity Check) requirements. To ensure a successful demo, I'm now recommending Volatility for a reliable, albeit temporary, solution to acquire the necessary information. For the presentation, I'll position Volatility as a on

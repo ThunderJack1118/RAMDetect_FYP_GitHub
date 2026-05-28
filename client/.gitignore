@@ -1,0 +1,103 @@
+# RAMDetect deployment-safe .gitignore
+# Keep source, active private FYP model files, and required resources.
+
+# Python cache / build
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.egg-info/
+build/
+dist/
+release/
+installer/output/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Virtual environments - never commit
+venv/
+venvvenv/
+.venv/
+.env/
+env/
+ENV/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+.DS_Store
+
+# Runtime output - never commit forensic/runtime data
+logs/
+dumps/
+reports/
+temp/
+ramdetect_report_repository/
+RAMDetect_PTM_ReportRepository/
+
+# Databases and repository state
+*.db
+*.sqlite
+*.sqlite3
+repository.db
+
+# Secrets / local machine config
+*.env
+.env.*
+secrets.json
+tokens.json
+config.local.yaml
+config.secret.yaml
+start_ptm_server.local.ps1
+ptm_repository_env.local.ps1
+
+# Memory dumps and forensic evidence
+*.dmp
+*.raw
+*.mem
+*.vmem
+*.lime
+*.aff4
+*.hiberfil
+
+# Installer/build archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.msi
+*.exe.tmp
+
+# Keep RAMDetect private FYP runtime binaries/resources if permitted
+# tools/DumpIt.exe is intentionally NOT ignored for private FYP deployment.
+# Check DumpIt licensing before publishing a public repository.
+
+# Model policy:
+# Active model files under models/ are allowed in the private FYP repository.
+# Heavy experiment sessions/debug exports are excluded from deployment/source hygiene.
+models/experiments/**/sessions/
+models/experiments/**/feature_debug/
+models/experiments/**/raw/
+models/experiments/**/cache/
+
+# RAMDetect local runtime session/cache data
+ui/data/scan_history.json
+ui/data/sessions/*.json
+ui/data/*.db
+ramdetect/ui/data/scan_history.json
+ramdetect/ui/data/sessions/*.json
+ramdetect/ui/data/*.db
+
+# Keep runtime folders
+!ui/data/.gitkeep
+!ui/data/sessions/.gitkeep
+!ramdetect/ui/data/.gitkeep
+!ramdetect/ui/data/sessions/.gitkeep
