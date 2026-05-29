@@ -152,7 +152,20 @@ SUPPORTED_EXTENSIONS = {".dmp", ".raw", ".bin", ".mem", ".vmem", ".lime"}
 
 
 def _project_root() -> Path:
-    """Return current RAMDetect project root independent of install location."""
+    """Return the active RAMDetect runtime root.
+
+    In a packaged/installed build, the correct writable root is the folder
+    containing RAMDetect.exe, for example C:/RAMDetect Admin or
+    C:/RAMDetect Analyst. This prevents one installed workstation folder from
+    reusing stale paths copied from another installation.
+    """
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         try:
@@ -161,6 +174,64 @@ def _project_root() -> Path:
         except OSError:
             pass
     return Path.cwd().resolve()
+
+
+
+def _resolve_dumpit_exe(configured: str | None = None) -> str | None:
+    """Resolve DumpIt.exe from the active installation/source folder.
+
+    The textbox/config value may be stale after packaging or moving between
+    Analyst/Admin installs. Live acquisition must prefer the bundled DumpIt.exe
+    under the active runtime folder.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    candidates = []
+
+    if configured:
+        try:
+            clean = str(configured).strip().strip('"').strip("'")
+            if clean:
+                candidates.append(_Path(clean))
+        except Exception:
+            pass
+
+    try:
+        exe_dir = _Path(_sys.executable).resolve().parent
+        candidates.append(exe_dir / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(exe_dir / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        meipass = getattr(_sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(_Path(meipass) / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        root = _project_root()
+        candidates.append(root / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(root / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        candidates.append(_Path.cwd() / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(_Path.cwd() / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            if candidate and candidate.is_file():
+                return str(candidate.resolve())
+        except Exception:
+            continue
+
+    return None
 
 
 def _canonical_dumps_dir(_configured: Optional[str] = None, create: bool = True) -> Path:
@@ -1060,7 +1131,7 @@ class AcquisitionBridge:
                 )
 
             # Enrich with crash-dump header (DTB, build number).
-            header_meta = MetadataReader().get_metadata(path)
+            header_meta = MetadataReader().get_metadata(path, write_sidecar=False)
             header_valid = header_meta.get("is_valid") and header_meta.get("type") == "Crash Dump"
             build_number = header_meta.get("build_number") if header_valid else None
             dtb_hex = header_meta.get("dtb_hex") if header_valid else None
@@ -1252,19 +1323,16 @@ class AcquisitionBridge:
                     except OSError:
                         pass
                     return _FAIL("Copy size mismatch. Original file kept; please retry.")
-                try:
-                    src.unlink()
-                except OSError as exc:
-                    delete_errors.append(f"Could not delete original dump: {exc}")
+                # Copy-only import: keep the original dump untouched, even if it is
+                # located in another RAMDetect installation folder.
             except Exception as exc:
                 return _FAIL(f"Failed to copy dump into session folder: {exc}")
 
             sidecar = _ensure_sidecar(dest_dump, copied_json)
             # Remove stale JSON beside the original imported dump after the
             # managed session copy has its own sidecar.
-            original_sidecar = _find_sidecar(src)
-            if original_sidecar and original_sidecar.resolve() != (sidecar.resolve() if sidecar else original_sidecar.resolve()):
-                _safe_unlink_sidecar(original_sidecar, session_dir)
+            # Keep any original sidecar untouched. RAMDetect only writes sidecars
+            # inside the active installation's managed dumps/<session>/ folder.
             msg_parts = [f"Moved into: {session_dir.name}"]
             msg_parts.append("JSON sidecar included." if sidecar else "No sidecar JSON generated.")
             if delete_errors:
@@ -1304,17 +1372,8 @@ class AcquisitionBridge:
         except OSError as exc:
             delete_errors.append(f"Could not delete copied raw file: {exc}")
 
-        # Keep the original raw/mem/vmem file untouched. However, if a previous
-        # converter run created a sibling .dmp/.json beside the original input,
-        # remove that duplicate so the converted dump only lives in dumps/<session>/.
-        sibling_dmp = src.with_suffix(".dmp")
-        sibling_json = src.with_suffix(".json")
-        for duplicate in (sibling_dmp, sibling_json):
-            try:
-                if duplicate.exists() and duplicate.resolve() not in {converted.resolve(), (copied_json.resolve() if copied_json else converted.resolve())}:
-                    duplicate.unlink()
-            except OSError as exc:
-                delete_errors.append(f"Could not delete duplicate {duplicate.name}: {exc}")
+        # Keep the original raw/mem/vmem file and any sibling metadata untouched.
+        # Only the active installation's managed dumps/<session>/ folder is updated.
 
         sidecar = _ensure_sidecar(converted, copied_json)
         original_sidecar = _find_sidecar(src)
@@ -1690,8 +1749,7 @@ class AcquisitionBridge:
                 # selection. Do not create metadata beside the user's original
                 # dump. The organized copy inside RAMDetect/dumps/<session> will
                 # receive its JSON sidecar during organize_loaded_file().
-                stray = _find_sidecar(dump_path)
-                _safe_unlink_sidecar(stray)
+                # Do not delete or create sidecar metadata beside an external/original dump.
                 return {
                     "success": True,
                     "json_path": None,
@@ -1805,10 +1863,14 @@ class LiveDumpWorker(threading.Thread):
 
             self.progress_cb(5, "Checking prerequisites...")
 
-            if not os.path.isfile(self.dumpit_path):
+            resolved_dumpit = _resolve_dumpit_exe(self.dumpit_path)
+            if not resolved_dumpit:
                 raise FileNotFoundError(
-                    f"DumpIt not found at: {self.dumpit_path}"
+                    "DumpIt not found. Expected bundled path such as "
+                    "<RAMDetect install>/_internal/tools/DumpIt.exe. "
+                    f"Configured path was: {self.dumpit_path}"
                 )
+            self.dumpit_path = resolved_dumpit
 
             self.progress_cb(10, "Creating session folder...")
 
@@ -1824,7 +1886,7 @@ class LiveDumpWorker(threading.Thread):
 
             self.progress_cb(15, "Initialising DumpItAcquisition...")
 
-            # Tell Config about the DumpIt path so DumpItAcquisition can find it
+            # Tell Config about the resolved DumpIt path so DumpItAcquisition can find it
             Config.set("acquisition.dumpit_path", self.dumpit_path)
             acquisition = DumpItAcquisition()
 

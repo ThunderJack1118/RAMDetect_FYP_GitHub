@@ -85,11 +85,20 @@ def _short_hash(value: str, left: int = 16, right: int = 16) -> str:
 
 
 def _project_root() -> Path:
-    """Return the current RAMDetect project root, independent of install path.
+    """Return the active RAMDetect runtime root.
 
-    Expected deployed path:
-        <project_root>/ramdetect/ui/pages/acquisition.py
+    In a packaged/installed build, the correct writable root is the folder
+    containing RAMDetect.exe, for example C:/RAMDetect Admin or
+    C:/RAMDetect Analyst. This prevents one installed workstation folder from
+    reusing stale paths copied from another installation.
     """
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         try:
@@ -213,11 +222,20 @@ class _FileOrganizeWorker(threading.Thread):
 
 
 def _project_root() -> Path:
-    """Return the current RAMDetect project root, independent of install path.
+    """Return the active RAMDetect runtime root.
 
-    Expected deployed path:
-        <project_root>/ramdetect/ui/pages/acquisition.py
+    In a packaged/installed build, the correct writable root is the folder
+    containing RAMDetect.exe, for example C:/RAMDetect Admin or
+    C:/RAMDetect Analyst. This prevents one installed workstation folder from
+    reusing stale paths copied from another installation.
     """
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         try:
@@ -295,11 +313,20 @@ class _ConvertWorker(threading.Thread):
 
 
 def _project_root() -> Path:
-    """Return the current RAMDetect project root, independent of install path.
+    """Return the active RAMDetect runtime root.
 
-    Expected deployed path:
-        <project_root>/ramdetect/ui/pages/acquisition.py
+    In a packaged/installed build, the correct writable root is the folder
+    containing RAMDetect.exe, for example C:/RAMDetect Admin or
+    C:/RAMDetect Analyst. This prevents one installed workstation folder from
+    reusing stale paths copied from another installation.
     """
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         try:

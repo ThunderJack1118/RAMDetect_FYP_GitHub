@@ -25,6 +25,37 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 
+def _metadata_runtime_root() -> Path:
+    """Return active runtime root used to decide whether sidecar writes are safe."""
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        try:
+            if (parent / "main.py").is_file() and (parent / "ramdetect").is_dir():
+                return parent
+        except OSError:
+            pass
+    return Path.cwd().resolve()
+
+
+def _inside_managed_dump_session(dump_path: Path) -> bool:
+    """Only allow sidecar writes under <runtime_root>/dumps/<session>/."""
+    try:
+        base = (_metadata_runtime_root() / "dumps").resolve()
+        resolved = dump_path.resolve()
+        rel = resolved.relative_to(base)
+        return len(rel.parts) >= 2 and resolved.parent != base
+    except Exception:
+        return False
+
+
+
 
 def _resolve_volatility_exe() -> str | None:
     """Resolve Volatility CLI in development and installed PyInstaller mode."""
@@ -197,6 +228,12 @@ class MetadataReader:
         return {}
 
     def _write_sidecar(self, dump_path: Path, metadata: Dict[str, Any]) -> Path:
+        if not _inside_managed_dump_session(dump_path):
+            # Never create/update JSON beside an external/original dump path.
+            # Sidecars are only persisted after the dump is organised under the
+            # active installation's dumps/<session>/ folder.
+            return self._sidecar_path(dump_path)
+
         p = self._sidecar_path(dump_path)
         metadata.setdefault("metadata", {})
         metadata["metadata"].update({

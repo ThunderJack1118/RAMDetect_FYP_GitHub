@@ -79,6 +79,52 @@ elif (_nested / "ui").is_dir():
 else:
     sys.path.insert(0, str(ROOT))
 
+
+# ── Bundled external tool resolver ───────────────────────────────────────────
+def _runtime_root() -> Path:
+    """Return active runtime root, especially for PyInstaller one-dir builds."""
+    try:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+    except Exception:
+        pass
+    return ROOT
+
+
+def _bootstrap_bundled_tools() -> None:
+    """Expose bundled tools such as DumpIt.exe and vol.exe to this process.
+
+    This prevents RAMDetect from accidentally using a venv vol.exe or failing to
+    locate DumpIt.exe after installation under C:\RAMDetect Admin / Analyst.
+    """
+    candidates = [
+        _runtime_root() / "_internal" / "tools",
+        _runtime_root() / "tools",
+        ROOT / "_internal" / "tools",
+        ROOT / "tools",
+    ]
+
+    existing = []
+    for p in candidates:
+        try:
+            if p.is_dir():
+                existing.append(str(p.resolve()))
+        except Exception:
+            pass
+
+    if existing:
+        current = os.environ.get("PATH", "")
+        parts = [x for x in current.split(os.pathsep) if x]
+        merged = []
+        for x in existing + parts:
+            if x not in merged:
+                merged.append(x)
+        os.environ["PATH"] = os.pathsep.join(merged)
+
+
+_bootstrap_bundled_tools()
+
+
 # ── Version ───────────────────────────────────────────────────────────────────
 __version__ = "1.0.0"
 APP_NAME    = "RAMDetect"

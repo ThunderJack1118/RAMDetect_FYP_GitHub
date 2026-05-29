@@ -28,14 +28,14 @@ Source: "..\deployment\scripts\Configure_RAMDetect_Analyst_Server.ps1"; DestDir:
 Source: "..\docs\deployment\README_ANALYST_DEPLOYMENT.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\RAMDetect Analyst"; Filename: "{app}\RAMDetect.exe"
-Name: "{autodesktop}\RAMDetect Analyst"; Filename: "{app}\RAMDetect.exe"; Tasks: desktopicon
+Name: "{group}\RAMDetect Analyst"; Filename: "{app}\RAMDetect.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\RAMDetect Analyst"; Filename: "{app}\RAMDetect.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Run]
-Filename: "{app}\RAMDetect.exe"; Description: "Launch RAMDetect Analyst"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\RAMDetect.exe"; WorkingDir: "{app}"; Description: "Launch RAMDetect Analyst"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -57,6 +57,7 @@ begin
       False);
   end;
 end;
+
 
 
 

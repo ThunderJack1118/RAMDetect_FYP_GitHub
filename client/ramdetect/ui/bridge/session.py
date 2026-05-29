@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -228,20 +230,37 @@ class ScanSession:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AppState  — module-level singleton
+# App-local persistence paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-_HISTORY_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),   # ui/
-    "data", "scan_history.json"
-)
+def _runtime_root() -> Path:
+    """Return the active RAMDetect runtime root for local UI data.
 
-# Full session snapshots — one JSON per scan, named by session_id.
-# Enables "View Details" from Dashboard to show complete artifact data.
-_SESSIONS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),   # ui/
-    "data", "sessions"
-)
+    Installed Analyst and Admin clients must keep scan history/session snapshots
+    isolated under their own folders, for example:
+      C:/RAMDetect Analyst/ui/data/
+      C:/RAMDetect Admin/ui/data/
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        try:
+            if (parent / "main.py").is_file() and (parent / "ramdetect").is_dir():
+                return parent
+        except OSError:
+            pass
+    return Path.cwd().resolve()
+
+
+_UI_DATA_DIR = _runtime_root() / "ui" / "data"
+_HISTORY_FILE = str(_UI_DATA_DIR / "scan_history.json")
+_SESSIONS_DIR = str(_UI_DATA_DIR / "sessions")
+
 
 
 class _AppState:

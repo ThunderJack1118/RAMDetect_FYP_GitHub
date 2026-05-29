@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QTimer, pyqtSignal, QUrl
@@ -136,20 +136,37 @@ def _shorten_middle(value: str, max_len: int = 72) -> str:
 
 
 def _normalise_timestamp(value: str) -> str:
-    """Display local DB and PTM API timestamps consistently in the UI."""
+    """Display stored UTC timestamps as local workstation time.
+
+    RAMDetect activity records from PostgreSQL/PTM API are stored in UTC.
+    The Activity Monitor should display them in the local workstation timezone,
+    for example Malaysia time UTC+8, without changing the stored audit record.
+    """
     text = str(value or "").strip()
     if not text:
         return ""
-    # PTM API uses UTC ISO form: 2026-05-15T08:46:17Z.
-    # For table readability, show the same style as local audit rows.
-    if "T" in text:
-        try:
-            compact = text.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(compact)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return text.replace("T", " ").replace("Z", "")
-    return text
+
+    try:
+        candidate = text.strip()
+        candidate = candidate.replace(" UTC", "+00:00").replace("Z", "+00:00")
+
+        # Support both ISO format and database-style UTC strings:
+        # 2026-05-29T05:16:52Z
+        # 2026-05-29 05:16:52
+        if "T" not in candidate and len(candidate) >= 19 and candidate[4:5] == "-" and candidate[7:8] == "-":
+            candidate = candidate[:10] + "T" + candidate[11:]
+
+        dt = datetime.fromisoformat(candidate)
+
+        # Naive database timestamps are treated as UTC because RAMDetect audit
+        # logging stores central activity time in UTC.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Preserve a readable fallback if an old/legacy row has unusual format.
+        return text.replace("T", " ").replace("Z", "")
 
 
 def _sort_timestamp(value: str) -> str:

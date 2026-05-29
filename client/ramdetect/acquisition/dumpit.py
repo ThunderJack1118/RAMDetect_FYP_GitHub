@@ -28,6 +28,98 @@ from ramdetect.utils.helpers import (
 )
 
 
+
+def _hidden_subprocess_kwargs() -> dict:
+    """Hide/minimize external DumpIt console window where Windows allows it."""
+    kwargs = {}
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs["startupinfo"] = startupinfo
+    except Exception:
+        pass
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creationflags:
+        kwargs["creationflags"] = creationflags
+
+    return kwargs
+
+
+
+def _runtime_root() -> Path:
+    """Return the active RAMDetect runtime root."""
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        try:
+            if (parent / "main.py").is_file() and (parent / "ramdetect").is_dir():
+                return parent
+        except OSError:
+            pass
+
+    return Path.cwd().resolve()
+
+
+def _resolve_dumpit_exe(configured: str | Path | None = None) -> Path | None:
+    """Resolve DumpIt.exe from the active installed/source folder."""
+    import sys as _sys
+
+    candidates = []
+
+    if configured:
+        try:
+            clean = str(configured).strip().strip('"').strip("'")
+            if clean:
+                candidates.append(Path(clean))
+        except Exception:
+            pass
+
+    try:
+        exe_dir = Path(_sys.executable).resolve().parent
+        candidates.append(exe_dir / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(exe_dir / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        meipass = getattr(_sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        root = _runtime_root()
+        candidates.append(root / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(root / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    try:
+        candidates.append(Path.cwd() / "_internal" / "tools" / "DumpIt.exe")
+        candidates.append(Path.cwd() / "tools" / "DumpIt.exe")
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate.resolve()
+        except Exception:
+            continue
+
+    return None
+
+
+
 class DumpItAcquisition:
     """
     Reliable RAM acquisition using Magnet DumpIt (v3.6+)
@@ -38,18 +130,33 @@ class DumpItAcquisition:
         self.config = get_config()
         
         # Resolve DumpIt path
-        if dumpit_path:
-            self.dumpit_path = Path(dumpit_path).resolve()
-        else:
-            self.dumpit_path = self.config.get_path('dumpit_exe').resolve()
-        
-        if not self.dumpit_path.exists():
+        configured_dumpit = dumpit_path
+        if not configured_dumpit:
+            try:
+                configured_dumpit = self.config.get_path('dumpit_path')
+            except Exception:
+                configured_dumpit = None
+
+        resolved_dumpit = _resolve_dumpit_exe(configured_dumpit)
+        if not resolved_dumpit:
             raise FileNotFoundError(
-                f"DumpIt.exe not found: {self.dumpit_path}\n"
-                "Download from Magnet Forensics: https://www.magnetforensics.com/resources/magnet-dumpit-for-windows/"
+                "DumpIt.exe not found. Expected bundled path such as "
+                "<RAMDetect install>/_internal/tools/DumpIt.exe. "
+                f"Configured path was: {configured_dumpit}"
             )
-        
-        self.dumps_dir = self.config.get_path('dumps_dir')
+
+        self.dumpit_path = resolved_dumpit
+
+        try:
+            configured_dumps_dir = self.config.get_path('dumps_dir')
+        except Exception:
+            configured_dumps_dir = None
+
+        if configured_dumps_dir:
+            self.dumps_dir = Path(configured_dumps_dir).resolve()
+        else:
+            self.dumps_dir = (_runtime_root() / "dumps").resolve()
+
         self.dumps_dir.mkdir(parents=True, exist_ok=True)
         
         # Config options
@@ -149,6 +256,7 @@ class DumpItAcquisition:
                 stdin=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=str(self.dumpit_path.parent),
+                **_hidden_subprocess_kwargs(),
                 text=True 
             )
             
