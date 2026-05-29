@@ -417,9 +417,15 @@ def _launch_gui(log: logging.Logger) -> int:
         else:
             log.info("Server connectivity OK; starting normal login mode.")
     except Exception as exc:
-        # Fail open to the normal legacy path if the new connectivity helper is
-        # unavailable. MainWindow/Activity Monitoring remains non-fatal.
-        log.warning("Runtime connectivity check failed: %s", exc)
+        # Fail safely to Offline Local Mode. If runtime detection itself fails,
+        # do not expose online login/admin workflow on a disconnected client.
+        log.warning("Runtime connectivity check failed; starting Offline Local Mode: %s", exc)
+        runtime_info = {
+            "mode": "offline_local",
+            "offline_mode": True,
+            "reason": f"Runtime connectivity check failed: {exc}",
+        }
+        os.environ["RAMDETECT_OFFLINE_LOCAL_MODE"] = "1"
 
     # Activity-monitoring database initialization. Skip it in Offline Local Mode
     # so a copied client with no PTM network/server can still open immediately.

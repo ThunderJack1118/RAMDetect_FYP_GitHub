@@ -34,6 +34,41 @@ from typing import Any, Dict, List
 
 from ui.bridge.config_bridge import Config
 
+
+def _runtime_root():
+    """Return active RAMDetect runtime root for report exports.
+
+    In packaged mode, __file__ points into _internal, but reports must be saved
+    beside RAMDetect.exe:
+      C:/RAMDetect Admin/reports
+      C:/RAMDetect Analyst/reports
+    """
+    from pathlib import Path as _Path
+    import sys as _sys
+
+    try:
+        if getattr(_sys, "frozen", False):
+            return _Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
+    here = _Path(__file__).resolve()
+    for parent in here.parents:
+        try:
+            if (parent / "main.py").is_file() and (parent / "ramdetect").is_dir():
+                return parent
+        except OSError:
+            pass
+
+    return _Path.cwd().resolve()
+
+
+def _reports_dir() -> str:
+    path = _runtime_root() / "reports"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
 # ── ReportLab availability flag ───────────────────────────────────────────────
 try:
     import reportlab
@@ -104,12 +139,12 @@ class ReportBridge:
         output_dir: str = None,
     ) -> Dict[str, Any]:
         """Generate a report and return a result dict."""
-        os.makedirs(Config.reports_dir, exist_ok=True)
+        os.makedirs(_reports_dir(), exist_ok=True)
 
         # ── Per-dump subfolder ─────────────────────────────────────────────────
         # Organises exports as:  reports/<dump_name>/<dump_name>_<ts>.<ext>
         # e.g.  reports/Windows_10_x64-malware/Windows_10_x64-malware_20241217_143022.pdf
-        base_dir = output_dir or Config.reports_dir
+        base_dir = output_dir or _reports_dir()
         dump_sub = _dump_folder(session.dump_filename)
         out_dir  = os.path.join(base_dir, dump_sub)
         os.makedirs(out_dir, exist_ok=True)
@@ -170,7 +205,7 @@ class ReportBridge:
 
             # Prune empty per-dump subfolder (but never the root reports/ dir)
             parent = os.path.dirname(path)
-            reports_root = os.path.normpath(Config.reports_dir)
+            reports_root = os.path.normpath(_reports_dir())
             if (
                 os.path.normpath(parent) != reports_root
                 and os.path.isdir(parent)
@@ -187,7 +222,7 @@ class ReportBridge:
     @staticmethod
     def list_reports() -> List[Dict]:
         """
-        Recursively scan Config.reports_dir (including per-dump subfolders)
+        Recursively scan _reports_dir() (including per-dump subfolders)
         and return a list of report dicts for the saved-reports table.
 
         Directory layout expected (but not required):
@@ -199,7 +234,7 @@ class ReportBridge:
                 ...
         """
         reports = []
-        d = Config.reports_dir
+        d = _reports_dir()
         if not os.path.isdir(d):
             return reports
 

@@ -429,11 +429,18 @@ def detect_runtime_mode(timeout_seconds: int = 2) -> dict[str, Any]:
 
     repo = check_repository_available(timeout_seconds=timeout_seconds)
 
-    offline = not db.available
+    # Strict offline routing:
+    # If PostgreSQL OR the PTM Repository API is unavailable, RAMDetect must
+    # open Offline Local Mode. Offline users are forced into the local
+    # Analyst-level workflow, regardless of whether the installed package is
+    # Admin or Analyst.
+    db_problem = not db.available
+    repo_problem = not repo.available
+    offline = db_problem or repo_problem
 
     if not db.configured:
         reason = db.detail
-    elif not db.available:
+    elif db_problem:
         if service.detail and service.detail != "not attempted":
             reason = (
                 "PostgreSQL activity/admin database is unreachable after service check "
@@ -441,11 +448,16 @@ def detect_runtime_mode(timeout_seconds: int = 2) -> dict[str, Any]:
             )
         else:
             reason = f"PostgreSQL activity/admin database is unreachable. Last DB error: {db.detail}"
+    elif repo_problem:
+        if not repo.configured:
+            reason = repo.detail
+        else:
+            reason = f"PTM Repository API is unreachable. Last API error: {repo.detail}"
     else:
         if service.available and "STARTED_RUNNING" in str(service.detail):
-            reason = "Online mode available after starting PostgreSQL service"
+            reason = "Online mode available after starting PostgreSQL service and PTM API check"
         elif service.available and "ALREADY_RUNNING" in str(service.detail):
-            reason = "Online mode available; PostgreSQL service already running"
+            reason = "Online mode available; PostgreSQL service already running and PTM API reachable"
         else:
             reason = "Online mode available"
 

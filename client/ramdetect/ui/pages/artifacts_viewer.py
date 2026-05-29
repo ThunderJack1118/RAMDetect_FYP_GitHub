@@ -76,11 +76,21 @@ from ui.bridge.session       import AppState
 from ui.bridge.config_bridge import Config
 
 def _project_root_for_outputs() -> str:
-    """Return the current RAMDetect project root for portable page exports.
+    """Return active RAMDetect runtime root for Artifact Viewer exports.
 
-    This prevents a copied workstation client from writing artifact exports to an
-    old absolute path stored in config.yaml, such as another PC's GITHUB folder.
+    In packaged mode, __file__ points into _internal. Artifact CSV/XLSX
+    exports must be saved beside RAMDetect.exe:
+      C:/RAMDetect Admin/reports
+      C:/RAMDetect Analyst/reports
     """
+    import sys as _sys
+
+    try:
+        if getattr(_sys, "frozen", False):
+            return os.path.dirname(os.path.abspath(_sys.executable))
+    except Exception:
+        pass
+
     here = os.path.abspath(__file__)
     cur = os.path.dirname(here)
     while True:
@@ -88,8 +98,7 @@ def _project_root_for_outputs() -> str:
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            # Fallback: artifacts_viewer.py -> pages -> ui -> ramdetect -> project
-            return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            return os.getcwd()
         cur = parent
 
 
