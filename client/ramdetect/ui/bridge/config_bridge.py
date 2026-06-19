@@ -15,6 +15,29 @@ Usage:
 from __future__ import annotations
 
 import os
+
+def _runtime_root() -> str:
+    """Return active RAMDetect runtime root.
+
+    In PyInstaller packaged mode, __file__ points into _internal. Runtime-owned
+    folders such as models, dumps, reports, logs, and datasets must be resolved
+    beside RAMDetect.exe instead:
+      C:/RAMDetect Admin/models
+      C:/RAMDetect Analyst/models
+    """
+    import sys as _sys
+
+    try:
+        if getattr(_sys, "frozen", False):
+            return os.path.dirname(os.path.abspath(_sys.executable))
+    except Exception:
+        pass
+
+    bridge_dir = os.path.dirname(os.path.abspath(__file__))
+    ui_dir = os.path.dirname(bridge_dir)
+    pkg_dir = os.path.dirname(ui_dir)
+    return os.path.dirname(pkg_dir)
+
 from typing import Any, Dict
 
 # ── Locate config.yaml (project root) ───────────────────────────────────────
@@ -23,10 +46,10 @@ from typing import Any, Dict
 #   dirname x2 → ramdetect/ui/
 #   dirname x3 → ramdetect/
 #   dirname x4 → RAMDetect/   ← project root
-_BRIDGE_DIR  = os.path.dirname(os.path.abspath(__file__))          # …/ramdetect/ui/bridge
-_UI_DIR      = os.path.dirname(_BRIDGE_DIR)                        # …/ramdetect/ui
-_PKG_DIR     = os.path.dirname(_UI_DIR)                            # …/ramdetect
-_PROJECT_DIR = os.path.dirname(_PKG_DIR)                           # …/RAMDetect  ✓
+_BRIDGE_DIR  = os.path.dirname(os.path.abspath(__file__))
+_UI_DIR      = os.path.dirname(_BRIDGE_DIR)
+_PKG_DIR     = os.path.dirname(_UI_DIR)
+_PROJECT_DIR = _runtime_root()
 _CONFIG_PATH = os.path.join(_PROJECT_DIR, "config.yaml")
 
 # ── Try importing PyYAML ──────────────────────────────────────────────────────

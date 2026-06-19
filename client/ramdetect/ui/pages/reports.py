@@ -22,6 +22,8 @@ from ui.pages.base_page import BasePage
 from ui.bridge.session import AppState
 from ui.bridge.report_bridge import ReportBridge, _HAS_REPORTLAB
 from ui.widgets.status_badge import StatusBadge
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 _BG_CARD   = '#1e293b'           # slate-800 solid — no transparency artifacts
@@ -29,18 +31,70 @@ _BG_INNER  = '#162032'           # slightly darker for info boxes
 _BORDER    = '#334155'           # slate-700
 _BORDER_LT = '#475569'           # slate-600
 _CYAN      = '#06b6d4'
-_CYAN_DIM  = 'rgba(6,182,212,0.10)'
-_CYAN_BRD  = 'rgba(6,182,212,0.40)'
+_CYAN_DIM  = 'rgba(6,182,212,26)'
+_CYAN_BRD  = 'rgba(6,182,212,102)'
 _GREEN     = '#34d399'
-_GREEN_DIM = 'rgba(52,211,153,0.15)'
-_GREEN_BRD = 'rgba(52,211,153,0.35)'
+_GREEN_DIM = 'rgba(52,211,153,38)'
+_GREEN_BRD = 'rgba(52,211,153,89)'
 _RED       = '#f87171'
-_RED_DIM   = 'rgba(248,113,113,0.15)'
-_RED_BRD   = 'rgba(248,113,113,0.35)'
+_RED_DIM   = 'rgba(248,113,113,38)'
+_RED_BRD   = 'rgba(248,113,113,89)'
 _TEXT      = '#f1f5f9'
 _TEXT_SEC  = '#cbd5e1'
 _MUTED     = '#94a3b8'
 _MUTED2    = '#64748b'
+
+
+def _refresh_palette(theme: str | None = None) -> None:
+    """Refresh report-page presentation constants for the active UI theme."""
+    global _BG_CARD, _BG_INNER, _BORDER, _BORDER_LT, _CYAN, _CYAN_DIM, _CYAN_BRD
+    global _GREEN, _GREEN_DIM, _GREEN_BRD, _RED, _RED_DIM, _RED_BRD
+    global _TEXT, _TEXT_SEC, _MUTED, _MUTED2
+    light = (theme or current_theme() or 'dark').lower() == 'light'
+    if light:
+        _BG_CARD   = '#ffffff'
+        _BG_INNER  = '#f8fbff'
+        _BORDER    = '#d9e6ff'
+        _BORDER_LT = '#c8d8f5'
+        _CYAN      = '#1a56db'
+        _CYAN_DIM  = '#eef4ff'
+        _CYAN_BRD  = '#9fb7e5'
+        _GREEN     = '#10b981'
+        _GREEN_DIM = '#ecfdf5'
+        _GREEN_BRD = '#86efac'
+        _RED       = '#dc2626'
+        _RED_DIM   = '#fff1f2'
+        _RED_BRD   = '#fecaca'
+        _TEXT      = '#1e3a6e'
+        _TEXT_SEC  = '#385f9f'
+        _MUTED     = '#6b82b4'
+        _MUTED2    = '#7b8fb8'
+    else:
+        _BG_CARD   = '#1e293b'
+        _BG_INNER  = '#162032'
+        _BORDER    = '#334155'
+        _BORDER_LT = '#475569'
+        _CYAN      = '#06b6d4'
+        _CYAN_DIM  = 'rgba(6,182,212,26)'
+        _CYAN_BRD  = 'rgba(6,182,212,102)'
+        _GREEN     = '#34d399'
+        _GREEN_DIM = 'rgba(52,211,153,38)'
+        _GREEN_BRD = 'rgba(52,211,153,89)'
+        _RED       = '#f87171'
+        _RED_DIM   = 'rgba(248,113,113,38)'
+        _RED_BRD   = 'rgba(248,113,113,89)'
+        _TEXT      = '#f1f5f9'
+        _TEXT_SEC  = '#cbd5e1'
+        _MUTED     = '#94a3b8'
+        _MUTED2    = '#64748b'
+
+
+def _rgba(light_hex: str, dark_rgba: str) -> str:
+    return light_hex if (current_theme() or 'dark').lower() == 'light' else dark_rgba
+
+
+def _is_light() -> bool:
+    return (current_theme() or 'dark').lower() == 'light'
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,7 +103,7 @@ def _lbl(text: str, size: int = 13, color: str = _TEXT,
          bold: bool = False, mono: bool = False) -> QLabel:
     w = QLabel(text)
     w.setStyleSheet(
-        f"color:{color};font-size:{size}px;background:transparent;"
+        f"color:{color};font-size:{size}px;background:transparent;border:none;border-radius:0px;"
         + ("font-weight:bold;" if bold else "")
         + ("font-family:Consolas,monospace;" if mono else "")
     )
@@ -68,10 +122,14 @@ def _divider() -> QWidget:
 def _panel_card() -> QFrame:
     """Outer full-height card — single border, solid bg, rounded corners."""
     f = QFrame()
+    f.setObjectName("ReportPanelCard")
     f.setFrameShape(QFrame.NoFrame)   # NoFrame avoids ghost double-line from StyledPanel
     f.setAttribute(Qt.WA_StyledBackground, True)
+    # Scope to the outer card only. QLabel inherits QFrame, so a generic
+    # "QFrame { ... }" selector creates unwanted rectangular borders around
+    # labels such as Current Report and Source File.
     f.setStyleSheet(f"""
-        QFrame {{
+        QFrame#ReportPanelCard {{
             background: {_BG_CARD};
             border: 1px solid {_BORDER};
             border-radius: 12px;
@@ -145,7 +203,7 @@ class _Toast(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose)
 
         border = _GREEN if success else _RED
-        bg     = 'rgba(17,51,34,0.97)' if success else 'rgba(60,17,17,0.97)'
+        bg     = 'rgba(17,51,34,247)' if success else 'rgba(60,17,17,247)'
         icon   = '✓' if success else '✗'
 
         # ── Outer transparent wrapper ──────────────────────────────────────
@@ -153,8 +211,9 @@ class _Toast(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         box = QFrame()
+        box.setObjectName("ReportToastBox")
         box.setStyleSheet(f"""
-            QFrame {{
+            QFrame#ReportToastBox {{
                 background: {bg};
                 border: 2px solid {border};
                 border-radius: 12px;
@@ -238,6 +297,7 @@ class ReportsPage(BasePage):
     ]
 
     def __init__(self, main_window):
+        _refresh_palette(current_theme())
         # Reports is reached from Results Dashboard, so keep a quick return
         # button in the shared header, same as Artifacts Viewer.
         super().__init__(main_window, show_dashboard=True, show_results=True)
@@ -252,8 +312,20 @@ class ReportsPage(BasePage):
     # ── Root ──────────────────────────────────────────────────────────────────
 
     def _build_body(self):
-        root = QHBoxLayout(self.body)
-        root.setContentsMargins(20, 16, 20, 20)
+        root = self.body.layout()
+        if root is None:
+            root = QHBoxLayout(self.body)
+        else:
+            while root.count():
+                item = root.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+                elif item.layout():
+                    while item.layout().count():
+                        child = item.layout().takeAt(0)
+                        if child.widget():
+                            child.widget().deleteLater()
+        root.setContentsMargins(40, 20, 40, 20)
         root.setSpacing(18)
         root.addWidget(self._build_left(),  1)
         root.addWidget(self._build_right(), 1)
@@ -280,21 +352,21 @@ class ReportsPage(BasePage):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical {
-                background: #1e293b; width: 6px; border-radius: 3px;
-            }
-            QScrollBar::handle:vertical {
-                background: #475569; border-radius: 3px; min-height: 20px;
-            }
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollBar:vertical {{
+                background: {_BG_CARD}; width: 6px; border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {_BORDER_LT}; border-radius: 3px; min-height: 20px;
+            }}
             QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
         inner = QWidget()
         inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        inner.setStyleSheet("background: transparent; border: none;")
+        set_role(inner, "transparent")
         iv = QVBoxLayout(inner)
         iv.setContentsMargins(0, 0, 0, 0)
         iv.setSpacing(0)
@@ -315,12 +387,12 @@ class ReportsPage(BasePage):
         v.addWidget(_divider())
 
         btn_wrap = QWidget()
-        btn_wrap.setStyleSheet("background: transparent; border: none;")
+        set_role(btn_wrap, "transparent")
         bv = QVBoxLayout(btn_wrap)
         bv.setContentsMargins(20, 14, 20, 16)
         bv.setSpacing(0)
 
-        self._gen_btn = QPushButton("⬇   Generate & Download Report")
+        self._gen_btn = QPushButton("⬇   Generate Download Report")
         self._gen_btn.setMinimumHeight(50)
         self._gen_btn.setCursor(Qt.PointingHandCursor)
         self._gen_btn.setStyleSheet(f"""
@@ -333,7 +405,6 @@ class ReportsPage(BasePage):
                 border-radius: 10px;
                 font-size: 14px;
                 font-weight: bold;
-                letter-spacing: 0.5px;
             }}
             QPushButton:hover {{
                 background: qlineargradient(
@@ -362,7 +433,7 @@ class ReportsPage(BasePage):
 
     def _section_current_report(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        set_role(w, "transparent")
         v = QVBoxLayout(w)
         v.setContentsMargins(20, 18, 20, 18)
         v.setSpacing(12)
@@ -429,7 +500,7 @@ class ReportsPage(BasePage):
 
     def _section_format(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        set_role(w, "transparent")
         v = QVBoxLayout(w)
         v.setContentsMargins(20, 18, 20, 18)
         v.setSpacing(10)
@@ -451,6 +522,7 @@ class ReportsPage(BasePage):
 
     def _make_format_row(self, fmt_id, icon, label, desc, size_str) -> _ClickFrame:
         frame = _ClickFrame()
+        frame.setObjectName(f"fmtRow_{fmt_id}")
         frame.setFixedHeight(62)
         frame.setFrameShape(QFrame.NoFrame)
         frame.setAttribute(Qt.WA_StyledBackground, True)
@@ -464,7 +536,7 @@ class ReportsPage(BasePage):
         icon_box.setFixedSize(38, 38)
         icon_box.setObjectName(f"ib_{fmt_id}")
         icon_box.setStyleSheet(
-            f"QFrame#ib_{fmt_id} {{ background:rgba(71,85,105,0.5); border-radius:8px; border:none; }}"
+            f"QFrame#ib_{fmt_id} {{ background:rgba(71,85,105,128); border-radius:8px; border:none; }}"
         )
         il = QVBoxLayout(icon_box)
         il.setContentsMargins(0, 0, 0, 0)
@@ -475,7 +547,7 @@ class ReportsPage(BasePage):
         h.addWidget(icon_box)
 
         tw = QWidget()
-        tw.setStyleSheet("background:transparent; border:none;")
+        set_role(tw, "transparent")
         tv = QVBoxLayout(tw)
         tv.setContentsMargins(0, 0, 0, 0)
         tv.setSpacing(2)
@@ -488,7 +560,7 @@ class ReportsPage(BasePage):
         h.addWidget(tw, 1)
 
         rw = QWidget()
-        rw.setStyleSheet("background:transparent; border:none;")
+        set_role(rw, "transparent")
         rv = QVBoxLayout(rw)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(2)
@@ -517,26 +589,26 @@ class ReportsPage(BasePage):
             ck: QLabel = frame.property('check_lbl')
             if sel:
                 frame.setStyleSheet(f"""
-                    QFrame {{
+                    QFrame#fmtRow_{fmt_id} {{
                         background: {_CYAN_DIM};
                         border: 2px solid {_CYAN};
                         border-radius: 10px;
                     }}
                 """)
                 ib.setStyleSheet(
-                    f"QFrame#ib_{fmt_id} {{ background:rgba(6,182,212,0.25); border-radius:8px; border:none; }}"
+                    f"QFrame#ib_{fmt_id} {{ background:rgba(6,182,212,64); border-radius:8px; border:none; }}"
                 )
                 ck.setVisible(True)
             else:
                 frame.setStyleSheet(f"""
-                    QFrame {{
-                        background: rgba(15,23,42,0.4);
+                    QFrame#fmtRow_{fmt_id} {{
+                        background: {_BG_INNER};
                         border: 1px solid {_BORDER};
                         border-radius: 10px;
                     }}
                 """)
                 ib.setStyleSheet(
-                    f"QFrame#ib_{fmt_id} {{ background:rgba(71,85,105,0.5); border-radius:8px; border:none; }}"
+                    f"QFrame#ib_{fmt_id} {{ background:rgba(71,85,105,128); border-radius:8px; border:none; }}"
                 )
                 ck.setVisible(False)
 
@@ -550,7 +622,7 @@ class ReportsPage(BasePage):
 
     def _section_pdf_options(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        set_role(w, "transparent")
         v = QVBoxLayout(w)
         v.setContentsMargins(20, 18, 20, 18)
         v.setSpacing(8)
@@ -565,6 +637,7 @@ class ReportsPage(BasePage):
 
     def _make_opt_toggle(self, key: str, label: str) -> _ClickFrame:
         frame = _ClickFrame()
+        frame.setObjectName(f"optRow_{key}")
         frame.setFixedHeight(42)
         frame.setFrameShape(QFrame.NoFrame)
         frame.setAttribute(Qt.WA_StyledBackground, True)
@@ -594,8 +667,9 @@ class ReportsPage(BasePage):
     def _apply_opt_style(self, frame: _ClickFrame, checked: bool):
         ck: QLabel = frame.property('check_lbl')
         if checked:
+            row_name = frame.objectName() or "optRow"
             frame.setStyleSheet(f"""
-                QFrame {{
+                QFrame#{row_name} {{
                     background: {_CYAN_DIM};
                     border: 1px solid {_CYAN_BRD};
                     border-radius: 8px;
@@ -603,9 +677,10 @@ class ReportsPage(BasePage):
             """)
             ck.setVisible(True)
         else:
+            row_name = frame.objectName() or "optRow"
             frame.setStyleSheet(f"""
-                QFrame {{
-                    background: rgba(15,23,42,0.35);
+                QFrame#{row_name} {{
+                    background: rgba(15,23,42,89);
                     border: 1px solid {_BORDER};
                     border-radius: 8px;
                 }}
@@ -629,7 +704,7 @@ class ReportsPage(BasePage):
         hdr.setAttribute(Qt.WA_StyledBackground, True)
         hdr.setStyleSheet(f"""
             QWidget#libHdr {{
-                background: rgba(51,65,85,0.25);
+                background: {_rgba("#f8fbff", "rgba(51,65,85,64)")};
                 border: none;
                 border-top-left-radius: 11px;
                 border-top-right-radius: 11px;
@@ -678,20 +753,18 @@ class ReportsPage(BasePage):
         # the vertical scrollbar area on Windows/high-DPI scaling.
         self._table.setViewportMargins(0, 0, 6, 0)
         # Force header view to be completely flat — no border-radius from any global QSS
-        hh.setStyleSheet("""
-            QHeaderView { border: none; border-radius: 0px; background: transparent; }
-            QHeaderView::section {
-                background: rgba(51,65,85,0.3);
-                color: #94a3b8;
+        hh.setStyleSheet(f"""
+            QHeaderView {{ border: none; border-radius: 0px; background: transparent; }}
+            QHeaderView::section {{
+                background: {_rgba('#eaf1ff', 'rgba(51,65,85,76)')};
+                color: {_MUTED};
                 padding: 10px 6px;
                 border: none;
                 border-radius: 0px;
-                border-bottom: 1px solid #334155;
+                border-bottom: 1px solid {_BORDER};
                 font-size: 11px;
                 font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
+            }}
         """)
         self._table.setStyleSheet(f"""
             QTableWidget {{
@@ -699,16 +772,15 @@ class ReportsPage(BasePage):
                 border: none;
                 color: {_TEXT_SEC};
                 font-size: 12px;
-                outline: none;
             }}
             QTableWidget::item {{
                 padding: 6px 8px;
-                border-bottom: 1px solid rgba(51,65,85,0.5);
+                border-bottom: 1px solid {_BORDER};
                 background: transparent;
             }}
-            QTableWidget::item:hover   {{ background: rgba(71,85,105,0.2); }}
+            QTableWidget::item:hover   {{ background: rgba(71,85,105,51); }}
             QTableWidget::item:selected {{
-                background: rgba(6,182,212,0.12);
+                background: {_rgba("#dbeafe", "rgba(6,182,212,31)")};
                 color: {_TEXT};
             }}
             QHeaderView {{
@@ -717,7 +789,7 @@ class ReportsPage(BasePage):
                 background: transparent;
             }}
             QHeaderView::section {{
-                background: rgba(51,65,85,0.3);
+                background: {_rgba("#eaf1ff", "rgba(51,65,85,76)")};
                 color: {_MUTED};
                 padding: 10px 8px;
                 border: none;
@@ -725,11 +797,9 @@ class ReportsPage(BasePage):
                 border-bottom: 1px solid {_BORDER};
                 font-size: 11px;
                 font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
             }}
             QTableCornerButton::section {{
-                background: rgba(51,65,85,0.3);
+                background: {_rgba("#eaf1ff", "rgba(51,65,85,76)")};
                 border: none;
                 border-radius: 0px;
             }}
@@ -751,7 +821,7 @@ class ReportsPage(BasePage):
         # Footer
         v.addWidget(_divider())
         footer = QWidget()
-        footer.setStyleSheet("background: transparent;")
+        set_role(footer, "transparent")
         fl = QHBoxLayout(footer)
         fl.setContentsMargins(20, 12, 20, 12)
 
@@ -771,7 +841,7 @@ class ReportsPage(BasePage):
                 border: none;
                 font-size: 13px;
                 font-weight: bold;
-                padding: 0;
+                padding: 0px;
             }}
             QPushButton:hover {{ color: #38bdf8; text-decoration: underline; }}
         """)
@@ -789,20 +859,20 @@ class ReportsPage(BasePage):
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setFixedHeight(22)
         lbl.setMinimumWidth(44)
-        fg = {
-            'PDF':  _TEXT_SEC,
-            'JSON': _CYAN,
-            'CSV':  _GREEN,
-            'XLSX': '#67e8f9',
-            'XML':  '#a78bfa',
-        }.get(fmt_u, _TEXT_SEC)
+        fg = {'PDF': _CYAN if _is_light() else _TEXT_SEC, 'JSON': _CYAN, 'CSV': _GREEN, 'XLSX': _CYAN if _is_light() else '#67e8f9', 'XML': '#7c3aed' if _is_light() else '#a78bfa'}.get(fmt_u, _TEXT_SEC)
+        bg = '#f8fbff' if _is_light() else '#334155'
+        brd = '#9fb7e5' if _is_light() else '#475569'
         lbl.setToolTip(f"Report format: {fmt_u}")
         lbl.setStyleSheet(f"""
             QLabel {{
-                background: #334155;
+                background: {bg};
                 color: {fg};
+                border: 1px solid {brd};
                 border-radius: 5px;
-                padding: 0 8px;
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 0px;
+                padding-bottom: 0px;
                 font-size: 10px;
                 font-weight: bold;
                 font-family: Consolas, monospace;
@@ -818,7 +888,7 @@ class ReportsPage(BasePage):
         file is saved/available, not clean or suspicious.
         """
         w = QWidget()
-        w.setStyleSheet("background:transparent;")
+        set_role(w, "transparent")
         h = QHBoxLayout(w)
         h.setContentsMargins(2, 2, 2, 2)
         h.setAlignment(Qt.AlignCenter)
@@ -836,12 +906,15 @@ class ReportsPage(BasePage):
             )
         elif s in ('running', 'pending', 'processing'):
             text, bg, fg, brd, tip = (
-                "⟳  PENDING", 'rgba(6,182,212,0.10)', _CYAN, _CYAN_BRD,
+                "⟳  PENDING", 'rgba(6,182,212,26)', _CYAN, _CYAN_BRD,
                 "Report generation or analysis status is not complete yet."
             )
         else:
             text, bg, fg, brd, tip = (
-                "✓  SAVED", 'rgba(148,163,184,0.12)', _MUTED, 'rgba(148,163,184,0.28)',
+                "✓  SAVED",
+                ('#eef4ff' if _is_light() else 'rgba(148,163,184,31)'),
+                (_CYAN if _is_light() else _MUTED),
+                ('#c8d8f5' if _is_light() else 'rgba(148,163,184,71)'),
                 "Saved report file. No verdict metadata was stored with this file."
             )
 
@@ -853,7 +926,7 @@ class ReportsPage(BasePage):
             QLabel {{
                 background:{bg}; color:{fg};
                 border:1px solid {brd}; border-radius:10px;
-                padding:2px 7px; font-size:10px; font-weight:bold;
+                padding-top:2px; padding-bottom:2px; padding-left:7px; padding-right:7px; font-size:10px; font-weight:bold;
             }}
         """)
         h.addWidget(lbl)
@@ -861,29 +934,36 @@ class ReportsPage(BasePage):
 
     def _make_action_cell(self, path: str) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background:transparent;")
+        set_role(w, "transparent")
         h = QHBoxLayout(w)
         h.setContentsMargins(2, 4, 2, 4)
         h.setSpacing(6)
         h.setAlignment(Qt.AlignCenter)
 
+        action_bg = '#eef4ff' if _is_light() else 'rgba(51,65,85,128)'
+        action_fg = _CYAN if _is_light() else _TEXT_SEC
+        action_brd = '#c8d8f5' if _is_light() else _BORDER
+        action_hover_bg = '#dbeafe' if _is_light() else 'rgba(6,182,212,38)'
         base_style = f"""
             QPushButton {{
-                background: rgba(51,65,85,0.50);
-                color: {_TEXT_SEC};
-                border: 1px solid {_BORDER};
+                background: {action_bg};
+                color: {action_fg};
+                border: 1px solid {action_brd};
                 border-radius: 6px;
                 font-size: 10px;
                 font-weight: 700;
-                padding: 0px 4px;
+                padding-top: 0px;
+                padding-bottom: 0px;
+                padding-left: 4px;
+                padding-right: 4px;
             }}
             QPushButton:hover {{
-                background: rgba(6,182,212,0.15);
+                background: {action_hover_bg};
                 color: {_CYAN};
-                border-color: rgba(6,182,212,0.45);
+                border-color: {_CYAN_BRD};
             }}
             QPushButton:pressed {{
-                background: rgba(8,145,178,0.22);
+                background: {_CYAN};
                 color: #ffffff;
             }}
         """
@@ -960,7 +1040,7 @@ class ReportsPage(BasePage):
             self._table.setItem(row, 0, name_item)
 
             fw = QWidget()
-            fw.setStyleSheet("background:transparent;")
+            set_role(fw, "transparent")
             fl = QHBoxLayout(fw)
             fl.setContentsMargins(6, 2, 6, 2)
             fl.setAlignment(Qt.AlignCenter)
@@ -1158,6 +1238,22 @@ class ReportsPage(BasePage):
 
     # ── showEvent ─────────────────────────────────────────────────────────────
 
+    def apply_theme(self, theme: str | None = None):
+        # Rebuild the UI-only report page so inline report/table styles match
+        # the current Light/Dark stylesheet. This does not touch generated files.
+        selected_fmt = getattr(self, '_selected_fmt', 'pdf')
+        opt_state = dict(getattr(self, '_opt_state', {}))
+        _refresh_palette(theme or current_theme())
+        self._selected_fmt = selected_fmt
+        self._opt_state = opt_state or {k: True for k, _ in self._PDF_OPTS}
+        self._fmt_btns = {}
+        self._opt_btns = {}
+        self._table_paths = []
+        self._build_body()
+        self._refresh_session_info()
+        self._refresh_library()
+
     def _on_show(self):
+        _refresh_palette(current_theme())
         self._refresh_session_info()
         self._refresh_library()

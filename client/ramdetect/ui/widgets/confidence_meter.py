@@ -18,6 +18,7 @@ Usage
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QProgressBar, QLabel
 from PyQt5.QtCore    import Qt
 from PyQt5.QtGui     import QFont
+from ui.theme import current_theme
 
 
 _GRADIENTS: dict[str, str] = {
@@ -67,7 +68,7 @@ class ConfidenceMeter(QWidget):
                  status:      str   = "neutral",
                  show_label:  bool  = True,
                  height:      int   = 8,
-                 label_width: int   = 52,
+                 label_width: int   = 66,
                  parent=None):
         super().__init__(parent)
         self._height      = height
@@ -88,6 +89,7 @@ class ConfidenceMeter(QWidget):
         if show_label:
             self._lbl = QLabel()
             self._lbl.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
+            self._lbl.setMinimumWidth(label_width)
             self._lbl.setFixedWidth(label_width)
             self._lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             row.addWidget(self._lbl)
@@ -112,9 +114,10 @@ class ConfidenceMeter(QWidget):
         grad  = _GRADIENTS.get(self._status, _GRADIENTS["neutral"])
         r     = self._height // 2
 
+        track = "#d9e6ff" if current_theme() == "light" else "rgba(51,65,85,0.4)"
         self.bar.setStyleSheet(f"""
             QProgressBar {{
-                background: rgba(51,65,85,0.4);
+                background: {track};
                 border: none;
                 border-radius: {r}px;
             }}

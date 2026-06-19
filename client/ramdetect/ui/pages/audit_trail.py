@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 import logging
+from ui.style_helpers import set_role, set_tone
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +45,7 @@ class AuditTrailPage(QWidget):
         hdr = QHBoxLayout()
         title = QLabel("Audit Trail")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #e0e6f0;")
+        set_tone(title, "#e0e6f0")
         hdr.addWidget(title)
         hdr.addSpacerItem(QSpacerItem(40, 0, QSizePolicy.Expanding))
 
@@ -59,7 +60,7 @@ class AuditTrailPage(QWidget):
         filter_row = QHBoxLayout()
 
         lbl_case = QLabel("Case ID:")
-        lbl_case.setStyleSheet("color: #a0adc4;")
+        set_tone(lbl_case, "#a0adc4")
         self._filter_case = QLineEdit()
         self._filter_case.setPlaceholderText("e.g. CASE-20240101-AB1234")
         self._filter_case.setFixedWidth(220)
@@ -67,7 +68,7 @@ class AuditTrailPage(QWidget):
         self._filter_case.returnPressed.connect(self._load_logs)
 
         lbl_user = QLabel("Username:")
-        lbl_user.setStyleSheet("color: #a0adc4;")
+        set_tone(lbl_user, "#a0adc4")
         self._filter_user = QLineEdit()
         self._filter_user.setPlaceholderText("Partial match")
         self._filter_user.setFixedWidth(160)

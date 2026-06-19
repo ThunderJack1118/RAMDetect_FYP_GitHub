@@ -20,25 +20,35 @@ from pathlib import Path
 from PyQt5.QtCore import QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout
+from ui.style_helpers import set_role, set_tone, set_variant
+from ui.theme import current_theme
 
 
 def _resource_path(*parts: str) -> str:
     return str(Path(__file__).resolve().parents[1] / "resources" / Path(*parts))
 
 
+def _is_light() -> bool:
+    try:
+        return str(current_theme()).strip().lower() == "light"
+    except Exception:
+        return False
+
+
 class _NavButton(QPushButton):
     def __init__(self, text: str, key: str, icon_path: str | None = None, parent=None):
         super().__init__(text, parent)
         self.key = key
+        self.setToolTip(text)
         self._active = False
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(34)
-        self.setMaximumHeight(34)
-        self.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        self.setMinimumHeight(32)
+        self.setMaximumHeight(32)
+        self.setFont(QFont("Segoe UI", 8, QFont.DemiBold))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if icon_path:
             self.setIcon(QIcon(icon_path))
-            self.setIconSize(QSize(18, 18))
+            self.setIconSize(QSize(15, 15))
         self._apply_style()
 
     def set_active(self, active: bool) -> None:
@@ -46,38 +56,7 @@ class _NavButton(QPushButton):
         self._apply_style()
 
     def _apply_style(self) -> None:
-        if self._active:
-            self.setStyleSheet("""
-                QPushButton {
-                    background: rgba(6, 182, 212, 0.12);
-                    color: #e0faff;
-                    border: 1px solid rgba(6, 182, 212, 0.40);
-                    border-radius: 8px;
-                    padding: 0 8px;
-                    text-align: left;
-                    font-size: 10px;
-                    font-weight: 700;
-                }
-                QPushButton:hover { background: rgba(6, 182, 212, 0.18); }
-            """)
-        else:
-            self.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #b6c2d5;
-                    border: 1px solid transparent;
-                    border-radius: 8px;
-                    padding: 0 8px;
-                    text-align: left;
-                    font-size: 10px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background: rgba(30, 41, 59, 0.72);
-                    border: 1px solid rgba(51, 65, 85, 0.75);
-                    color: #f8fafc;
-                }
-            """)
+        set_variant(self, "sideNavActive" if self._active else "sideNav")
 
 
 class AdminSidePanel(QFrame):
@@ -93,50 +72,41 @@ class AdminSidePanel(QFrame):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         self._buttons: dict[str, _NavButton] = {}
+        self._logo_label: QLabel | None = None
         self._user_label: QLabel | None = None
         self._role_label: QLabel | None = None
         self._machine_label: QLabel | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
-        self.setStyleSheet("""
-            QFrame#AdminSidePanel {
-                background: #0b1220;
-                border-right: 1px solid rgba(51, 65, 85, 0.58);
-            }
-            QLabel { background: transparent; border: none; }
-        """)
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 16, 12, 14)
+        root.setContentsMargins(10, 16, 10, 14)
         root.setSpacing(10)
 
         brand = QFrame()
-        brand.setStyleSheet("background: transparent; border: none;")
+        set_role(brand, "transparent")
         row = QHBoxLayout(brand)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
         logo = QLabel()
-        logo.setFixedSize(44, 44)
+        logo.setObjectName("AdminSideLogo")
+        logo.setFixedSize(58, 58)
         logo.setAlignment(Qt.AlignCenter)
-        logo_path = Path(__file__).resolve().parents[1] / "resources" / "photo" / "ramdetect.png"
-        if logo_path.exists():
-            pix = QPixmap(str(logo_path))
-            pix = self._crop_logo_pixmap(pix)
-            logo.setPixmap(pix.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            logo.setText("RD")
-            logo.setStyleSheet("color: #06b6d4; font-weight: 800;")
+        self._logo_label = logo
+        self._update_logo()
 
         text_box = QVBoxLayout()
         text_box.setContentsMargins(0, 0, 0, 0)
         text_box.setSpacing(0)
         title = QLabel("Admin Console")
+        title.setObjectName("AdminConsoleTitle")
         title.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        title.setStyleSheet("color: #f8fafc;")
+        set_tone(title, "#f8fafc")
         subtitle = QLabel("Activity Monitoring")
+        subtitle.setObjectName("AdminConsoleSubtitle")
         subtitle.setFont(QFont("Segoe UI", 7))
-        subtitle.setStyleSheet("color: #64748b;")
+        set_tone(subtitle, "#64748b")
         text_box.addWidget(title)
         text_box.addWidget(subtitle)
 
@@ -146,32 +116,21 @@ class AdminSidePanel(QFrame):
 
         user_card = QFrame()
         user_card.setObjectName("SignedInCard")
-        user_card.setStyleSheet("""
-            QFrame#SignedInCard {
-                background: rgba(15, 23, 42, 0.72);
-                border: 1px solid rgba(51, 65, 85, 0.68);
-                border-radius: 10px;
-            }
-            QFrame#SignedInCard QLabel {
-                background: transparent;
-                border: none;
-            }
-        """)
         u = QVBoxLayout(user_card)
         u.setContentsMargins(9, 8, 9, 8)
         u.setSpacing(1)
         small = QLabel("SIGNED IN")
         small.setFont(QFont("Segoe UI", 7, QFont.Bold))
-        small.setStyleSheet("color: #64748b; letter-spacing: 1.0px;")
+        small.setProperty("role", "overline")
         self._user_label = QLabel("admin")
         self._user_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self._user_label.setStyleSheet("color: #e2e8f0;")
+        set_tone(self._user_label, "#e2e8f0")
         self._role_label = QLabel("Admin")
         self._role_label.setFont(QFont("Segoe UI", 8))
-        self._role_label.setStyleSheet("color: #06b6d4;")
+        set_tone(self._role_label, "#06b6d4")
         self._machine_label = QLabel(self._machine_name())
         self._machine_label.setFont(QFont("Segoe UI", 8))
-        self._machine_label.setStyleSheet("color: #64748b;")
+        set_tone(self._machine_label, "#64748b")
         u.addWidget(small)
         u.addWidget(self._user_label)
         u.addWidget(self._role_label)
@@ -181,7 +140,7 @@ class AdminSidePanel(QFrame):
         root.addSpacing(4)
         section = QLabel("WORKSPACE")
         section.setFont(QFont("Segoe UI", 7, QFont.Bold))
-        section.setStyleSheet("color: #64748b; letter-spacing: 1.1px;")
+        section.setProperty("role", "overline")
         root.addWidget(section)
 
         self._add_nav(root, "dashboard", "Dashboard", self.dashboard_requested,
@@ -194,34 +153,60 @@ class AdminSidePanel(QFrame):
         root.addStretch(1)
 
         footer = QLabel("Monitoring enabled")
+        footer.setObjectName("AdminSideFooter")
         footer.setAlignment(Qt.AlignCenter)
         footer.setFont(QFont("Segoe UI", 8))
-        footer.setStyleSheet("color: #52627a;")
+        set_tone(footer, "#52627a")
         root.addWidget(footer)
 
         logout = QPushButton("⏻  Logout")
+        logout.setObjectName("AdminSideLogout")
         logout.setCursor(Qt.PointingHandCursor)
-        logout.setMinimumHeight(34)
-        logout.setMaximumHeight(34)
+        logout.setMinimumHeight(40)
+        logout.setMaximumHeight(40)
         logout.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-        logout.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #fca5a5;
-                border: 1px solid rgba(127, 29, 29, 0.72);
-                border-radius: 8px;
-                font-size: 10px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background: rgba(127, 29, 29, 0.22);
-                border-color: #ef4444;
-                color: #fecaca;
-            }
-        """)
+        set_variant(logout, "logout")
         logout.clicked.connect(self.logout_requested)
         root.addWidget(logout)
         self.set_active("dashboard")
+
+
+    def _update_logo(self) -> None:
+        """Load the correct admin-side logo for the active theme."""
+        logo = getattr(self, "_logo_label", None)
+        if logo is None:
+            return
+        photo_dir = Path(__file__).resolve().parents[1] / "resources" / "photo"
+        if _is_light():
+            candidates = (
+                photo_dir / "RAMDETECT-LOGO_blue.png",
+                photo_dir / "ramdetect_blue.jpg",
+                photo_dir / "ramdetect.png",
+            )
+        else:
+            # Match the main RAMDetect dark header asset.
+            candidates = (
+                photo_dir / "ramdetect.png",
+                photo_dir / "RAMDETECT-LOGO.png",
+                photo_dir / "RAMDETECT-LOGO_blue.png",
+            )
+        logo_path = next((p for p in candidates if p.exists()), None)
+        if logo_path is None:
+            logo.setPixmap(QPixmap())
+            logo.setText("RD")
+            set_tone(logo, "#06b6d4")
+            return
+        logo.setText("")
+        pix = QPixmap(str(logo_path))
+        pix = self._crop_logo_pixmap(pix)
+        logo.setPixmap(pix.scaled(56, 56, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._update_logo()
+
+    def apply_theme(self, theme: str | None = None) -> None:
+        self._update_logo()
 
     def _add_nav(self, root: QVBoxLayout, key: str, text: str, signal, icon_path: str | None = None) -> None:
         btn = _NavButton(text, key, icon_path, self)

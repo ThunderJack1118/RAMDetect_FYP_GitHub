@@ -16,50 +16,55 @@ from PyQt5.QtWidgets import (
     QFrame, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QSizePolicy,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
-from PyQt5.QtGui  import QFont, QColor, QPainter, QPen
+from pathlib import Path
+
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui  import QFont, QColor, QIcon
 
 from ui.widgets.status_badge import StatusBadge
 from ui.widgets.confidence_meter import ConfidenceMeter
 from ui.widgets.header_bar import HeaderBar
 from ui.bridge.session import AppState, ScanSession
+from ui.style_helpers import set_role, set_tone, set_variant
+from ui.theme import current_theme
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Activity (pulse/waveform) icon  — mirrors lucide-react <Activity />
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _ActivityIcon(QWidget):
-    """
-    Paints a small cyan ECG-style pulse waveform (20×20 px),
-    matching the lucide-react <Activity> icon used in the React prototype.
-    """
-    def __init__(self, size: int = 20, parent=None):
-        super().__init__(parent)
-        self._sz = size
-        self.setFixedSize(size, size)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent;")
+class _ActivityIcon(QLabel):
+    """Dashboard history title icon loaded from the RAMDetect SVG asset.
 
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor("#06b6d4"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-        p.setPen(pen)
-        s = self._sz
-        # Scaled waveform: flat → up-spike → down-spike → flat
-        pts = [
-            QPoint(0,          int(s * 0.50)),
-            QPoint(int(s*0.25), int(s * 0.50)),
-            QPoint(int(s*0.38), int(s * 0.15)),
-            QPoint(int(s*0.50), int(s * 0.85)),
-            QPoint(int(s*0.62), int(s * 0.35)),
-            QPoint(int(s*0.75), int(s * 0.50)),
-            QPoint(s,           int(s * 0.50)),
-        ]
-        for i in range(len(pts) - 1):
-            p.drawLine(pts[i], pts[i + 1])
-        p.end()
+    Keep this as a QLabel/QIcon pixmap instead of custom QPainter code.  The
+    fixed square box prevents clipping while keeping the icon aligned with the
+    section title in both light and dark themes.
+    """
+    def __init__(self, size: int = 22, parent=None):
+        super().__init__(parent)
+        self._size = max(18, int(size))
+        self.setFixedSize(self._size + 4, self._size + 4)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet("background:transparent;border:none;padding:0px;margin:0px;")
+        set_role(self, "transparent")
+        self._load_icon()
+
+    def _load_icon(self) -> None:
+        icon_path = (
+            Path(__file__).resolve().parents[1]
+            / "resources" / "photo"
+            / "planner_review_24dp_75FBFD_FILL0_wght700_GRAD200_opsz40.svg"
+        )
+        if icon_path.exists():
+            pix = QIcon(str(icon_path)).pixmap(self._size, self._size)
+            if not pix.isNull():
+                self.setPixmap(pix)
+                return
+
+        # Safe fallback only if the SVG asset is missing in an older checkout.
+        self.setText("▱")
+        self.setFont(QFont("Segoe UI Symbol", max(13, int(self._size * 0.72)), QFont.Bold))
+        self.setStyleSheet("color:#06b6d4;background:transparent;border:none;padding:0px;margin:0px;")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,20 +76,51 @@ def _card(radius: int = 12) -> QFrame:
     f.setObjectName("appCard")
     f.setFrameShape(QFrame.NoFrame)
     f.setFrameShadow(QFrame.Plain)
-    f.setStyleSheet(
-        f"QFrame#appCard {{"
-        f"  background: rgba(30,41,59,0.45);"
-        f"  border: 1px solid rgba(51,65,85,0.5);"
-        f"  border-radius: {radius}px;"
-        f"}}"
-    )
+    set_role(f, "card")
     return f
+
+
+def _apply_rounded_widget_mask(widget: QWidget, radius: int = 12) -> None:
+    """Deprecated Dashboard mask helper.
+
+    Earlier patches used a bitmap mask to clip table children to the rounded
+    history card. That removed some sharp corners, but it also made the custom
+    header row look detached from the table on Windows. The final Dashboard
+    approach keeps the card unmasked and makes the table/viewport transparent
+    so only the outer card owns the rounded border.
+    """
+    try:
+        if widget is not None:
+            widget.clearMask()
+    except Exception:
+        pass
+
+
+class _RoundedHistoryCard(QFrame):
+    """History card that clips square table/header children to the card radius."""
+
+    def __init__(self, radius: int = 12, parent=None):
+        super().__init__(parent)
+        self._radius = int(radius)
+        self.setObjectName("appCard")
+        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShadow(QFrame.Plain)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        set_role(self, "card")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        _apply_rounded_widget_mask(self, self._radius)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _apply_rounded_widget_mask(self, self._radius)
 
 
 def _lbl(text, size=13, bold=False, color="#ffffff") -> QLabel:
     l = QLabel(text)
     l.setFont(QFont("Segoe UI", size, QFont.Bold if bold else QFont.Normal))
-    l.setStyleSheet(f"color: {color}; background: transparent;")
+    set_tone(l, color)
     return l
 
 
@@ -149,14 +185,7 @@ class _StatCard(QFrame):
         icon, icon_col, icon_bg, num_col = self._THEMES.get(
             kind, ("?", "#fff", "transparent", "#fff")
         )
-        # Scope to #statCard only — prevents cascade to child QLabels
-        self.setStyleSheet(
-            "QFrame#statCard {"
-            "  background: rgba(30,41,59,0.45);"
-            "  border: 1px solid rgba(51,65,85,0.5);"
-            "  border-radius: 12px;"
-            "}"
-        )
+        set_role(self, "card")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumHeight(104)
 
@@ -169,20 +198,13 @@ class _StatCard(QFrame):
 
         lbl_w = QLabel(label)
         lbl_w.setFont(QFont("Segoe UI", 12))
-        # Explicit border:none + border-radius:0 prevents PyQt5 cascade
-        lbl_w.setStyleSheet(
-            "color: #94a3b8; background: transparent;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(lbl_w, "#94a3b8")
 
         self._num = QLabel(value)
         self._num.setFont(QFont("Segoe UI", 26, QFont.Bold))
         if kind == "last":
             self._num.setFont(QFont("Segoe UI", 18, QFont.DemiBold))
-        self._num.setStyleSheet(
-            f"color: {num_col}; background: transparent;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(self._num, num_col)
 
         left.addWidget(lbl_w)
         left.addWidget(self._num)
@@ -214,10 +236,7 @@ class _EmptyState(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(
-            "QWidget { background: transparent; border: none; border-radius: 0; }"
-            "QLabel  { border: none; border-radius: 0; background: transparent; }"
-        )
+        set_role(self, "transparent")
         vb = QVBoxLayout(self)
         # The empty-state owns the whole history-card body when there is no
         # scan history. Keep it centered with enough breathing room, without
@@ -229,31 +248,22 @@ class _EmptyState(QWidget):
         icon = QLabel("🔬")
         icon.setFont(QFont("Segoe UI", 42))
         icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet(
-            "background: transparent; color: #64748b;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(icon, "#64748b")
 
         title = QLabel("No scans yet")
         title.setFont(QFont("Segoe UI", 17, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(
-            "color: #94a3b8; background: transparent;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(title, "#94a3b8")
 
         sub = QLabel("Acquire a RAM dump or load an existing file to get started.")
         sub.setFont(QFont("Segoe UI", 12))
         sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet(
-            "color: #7f91ad; background: transparent;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(sub, "#7a8cb0")
 
         btn = QPushButton("+ Start Your First Scan")
-        btn.setObjectName("primaryBtn")
+        btn.setObjectName("emptyStateAction")
         btn.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        btn.setFixedSize(240, 44)
+        btn.setFixedSize(260, 32)
         btn.clicked.connect(self.new_scan_clicked)
 
         vb.addWidget(icon)
@@ -271,7 +281,9 @@ class DashboardPage(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.mw = main_window
-        self.setStyleSheet("background: transparent;")
+        self.setObjectName("DashboardPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        set_role(self, "transparent")
         self._sort_col  = 1    # default sort: Date column
         self._sort_asc  = False
 
@@ -280,7 +292,7 @@ class DashboardPage(QWidget):
         root.setSpacing(0)
 
         # ── Header ────────────────────────────────────────────────────────────
-        hdr = HeaderBar(
+        self._header = HeaderBar(
             "New Scan",
             show_action=True,
             show_dashboard=False,
@@ -288,6 +300,7 @@ class DashboardPage(QWidget):
         )
         # Side-panel layout: align header logo and New Scan button with the
         # stat cards/history cards below.
+        hdr = self._header
         if hdr.layout() is not None:
             hdr.layout().setContentsMargins(20, 0, 20, 0)
         hdr.settings_clicked.connect(lambda: self.mw.navigate_to("settings"))
@@ -320,12 +333,13 @@ class DashboardPage(QWidget):
         root.addLayout(body, stretch=1)
 
         # Initial data load
+        self.apply_theme(current_theme(), refresh_table=False)
         self._refresh_data()
 
     # ── Build history card ────────────────────────────────────────────────────
 
     def _build_history_card(self) -> QFrame:
-        card = _card(12)
+        card = _RoundedHistoryCard(12)
         card.setObjectName("historyCard")
         card.setFrameShape(QFrame.NoFrame)
         card.setFrameShadow(QFrame.Plain)
@@ -333,16 +347,12 @@ class DashboardPage(QWidget):
         card.setMinimumHeight(422)
         card.setMaximumHeight(552)
         card.setFixedHeight(512)
-        # Only style the card frame itself — no cascade to children
-        card.setStyleSheet(
-            "QFrame#historyCard {"
-            "  background: rgba(30,41,59,0.45);"
-            "  border: 1px solid rgba(51,65,85,0.5);"
-            "  border-radius: 12px;"
-            "}"
-        )
 
         vb = QVBoxLayout(card)
+        # Keep the section header and custom table header flush with the card
+        # so the header row remains visually merged with the table body.
+        # Sharp bottom corners are handled by making the table/viewport
+        # transparent; only the outer card paints the rounded border.
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(0)
 
@@ -351,25 +361,15 @@ class DashboardPage(QWidget):
         hdr_bar.setObjectName("histHdr")
         hdr_bar.setFrameStyle(QFrame.NoFrame)
         hdr_bar.setFixedHeight(52)
-        hdr_bar.setStyleSheet(
-            "QFrame#histHdr {"
-            "  background: transparent;"
-            "  border: none;"
-            "  border-bottom: 1px solid rgba(51,65,85,0.4);"
-            "  border-radius: 0px;"
-            "}"
-        )
+        set_role(hdr_bar, "transparent")
         hdr_row = QHBoxLayout(hdr_bar)
         hdr_row.setContentsMargins(20, 0, 20, 0)
         hdr_row.setSpacing(10)
 
-        icon_l = _ActivityIcon(20)
+        icon_l = _ActivityIcon(22)
         title_l = QLabel("Recent Analysis History")
         title_l.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        title_l.setStyleSheet(
-            "color: #ffffff; background: transparent;"
-            " border: none; border-radius: 0px;"
-        )
+        set_tone(title_l, "#ffffff")
 
         hdr_row.addWidget(icon_l, alignment=Qt.AlignVCenter)
         hdr_row.addWidget(title_l)
@@ -390,89 +390,42 @@ class DashboardPage(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.NoSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setFocusPolicy(Qt.NoFocus)
         self.table.setSortingEnabled(False)
         self.table.setTextElideMode(Qt.ElideMiddle)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.setAlternatingRowColors(True)
-        # Row bg colours -- cell widgets must match exactly to prevent ghost
-        self._row_bg = ("#111827", "#0d1523")
-        self.table.setStyleSheet(
-            "QTableWidget#historyTable { "
-            "  background: #111827; "
-            "  border: none; "
-            "  border-radius: 0px; "
-            "}"
-            "QTableWidget::item    { padding: 0px 4px 0px 12px; border: none; color: #ffffff; }"
-            "QTableWidget::item:alternate { background: #0d1523; }"
-            "QTableWidget::item:hover     { background: rgba(51,65,85,0.45); }"
-            "QTableWidget::item:selected  { background: rgba(6,182,212,0.15); color: white; }"
-            "QScrollBar:vertical {"
-            "  background: #0b1220;"
-            "  width: 8px;"
-            "  margin: 2px 1px 2px 0px;"
-            "  border-radius: 4px;"
-            "}"
-            "QScrollBar::handle:vertical {"
-            "  background: rgba(100,116,139,0.50);"
-            "  border-radius: 4px;"
-            "  min-height: 36px;"
-            "}"
-            "QScrollBar::handle:vertical:hover {"
-            "  background: rgba(148,163,184,0.62);"
-            "}"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
-            "  height: 0px;"
-            "  background: transparent;"
-            "}"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
-            "  background: transparent;"
-            "}"
-        )
+        self.table.setAlternatingRowColors(False)
+        # Keep row/cell backgrounds transparent so the table body merges into
+        # the rounded history card instead of drawing rectangular row cards.
+        self._row_bg = ("transparent", "transparent")
+        self._apply_table_style(current_theme())
 
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Fixed);  hh.resizeSection(0, 300)  # Filename
-        hh.setSectionResizeMode(1, QHeaderView.Fixed);  hh.resizeSection(1, 155)  # Date & Time
-        hh.setSectionResizeMode(2, QHeaderView.Fixed);  hh.resizeSection(2, 82)   # Size
-        hh.setSectionResizeMode(3, QHeaderView.Fixed);  hh.resizeSection(3, 170)  # Status
-        hh.setSectionResizeMode(4, QHeaderView.Stretch)                           # Hybrid Score
-        hh.setSectionResizeMode(5, QHeaderView.Fixed);  hh.resizeSection(5, 185)  # Actions
-        hh.sectionClicked.connect(self._header_clicked)
+        for _col in range(6):
+            hh.setSectionResizeMode(_col, QHeaderView.Fixed)
         hh.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        hh.setFixedHeight(42)
-        hh.setStyleSheet(
-            "QHeaderView           { background: #0d1523; border: none; }"
-            "QHeaderView::section  {"
-            "  background: #0d1523; color: #cbd5e1;"
-            "  font-size: 12px; font-weight: 600;"
-            # padding-left: 2px matches item padding-left for column alignment
-            "  padding-left: 12px;"
-            "  border: none;"
-            "  border-bottom: 1px solid rgba(51,65,85,0.5);"
-            "}"
-            "QHeaderView::section:hover { background: rgba(6,182,212,0.07); }"
-        )
+        # Use a custom rounded header row instead of QHeaderView painting.
+        # QHeaderView leaks sharp rectangular corners in light mode on Windows.
+        hh.setVisible(False)
 
         self._table_wrap = QFrame()
         table_wrap = self._table_wrap
         table_wrap.setObjectName("historyTableWrap")
         table_wrap.setFrameShape(QFrame.NoFrame)
-        table_wrap.setStyleSheet(
-            "QFrame#historyTableWrap {"
-            "  background: #111827;"
-            "  border: none;"
-            "  border-bottom-left-radius: 12px;"
-            "  border-bottom-right-radius: 12px;"
-            "}"
-        )
+        set_role(table_wrap, "panel")
         tw = QVBoxLayout(table_wrap)
-        # This bottom inset is the key visual fix: the table viewport no longer
-        # reaches the outer edge, so the rounded lower corners remain visible.
-        tw.setContentsMargins(0, 0, 0, 8)
+        # Inset the table body slightly so the outer rounded card border remains
+        # visible and the custom header cannot bleed into the card corners.
+        tw.setContentsMargins(0, 0, 0, 0)
         tw.setSpacing(0)
+        self._hist_header = self._build_history_table_header()
+        tw.addWidget(self._hist_header)
         tw.addWidget(self.table, stretch=1)
         vb.addWidget(table_wrap, stretch=1)
+        self._apply_header_style(current_theme())
+        self._sync_history_columns()
 
         # ── Empty state (shown when history is empty) ─────────────────────────
         self._empty = _EmptyState()
@@ -481,6 +434,295 @@ class DashboardPage(QWidget):
         self._empty.hide()
 
         return card
+
+    def _build_history_table_header(self) -> QFrame:
+        """Draw a rounded, theme-aware table header without QHeaderView edge bleed."""
+        header = QFrame()
+        header.setObjectName("historyHeaderRow")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header.setFrameShape(QFrame.NoFrame)
+        header.setFixedHeight(42)
+
+        row = QHBoxLayout(header)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+
+        self._hist_header_buttons = []
+        specs = [
+            (0, "Filename", 300, False),
+            (1, "Date & Time", 150, False),
+            (2, "Size", 82, False),
+            (3, "Status", 155, False),
+            (4, "Hybrid Score", 0, True),
+            (5, "Actions", 162, False),
+        ]
+        for col, text, width, stretch in specs:
+            btn = QPushButton(text.replace("&", "&&"))
+            btn.setObjectName("historyHeaderCell")
+            btn.setProperty("edge", "first" if col == 0 else "last" if col == 5 else "middle")
+            btn.setCursor(Qt.PointingHandCursor if col != 5 else Qt.ArrowCursor)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setFlat(True)
+            btn.clicked.connect(lambda _=False, c=col: self._header_clicked(c))
+            if stretch:
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                row.addWidget(btn, stretch=1)
+            else:
+                btn.setFixedWidth(width)
+                row.addWidget(btn)
+            self._hist_header_buttons.append(btn)
+        return header
+
+    def _sync_history_columns(self) -> None:
+        """Align custom header buttons with the real QTableWidget columns.
+
+        The same proportional plan is used for Admin Console and Analyst mode.
+        Widths are calculated from the visible viewport so the Dashboard table
+        fits the side-panel layout without changing the visual proportions
+        between light and dark mode.
+        """
+        try:
+            viewport_w = int(self.table.viewport().width() or self.table.width() or 0)
+        except Exception:
+            viewport_w = 0
+        if viewport_w <= 0:
+            return
+
+        avail = max(620, viewport_w - 2)
+
+        # Filename, Date, Size, Status, Hybrid Score, Actions.
+        #
+        # Admin mode has a left side panel, so the same Dashboard table is
+        # rendered in a narrower content area.  The previous proportional plan
+        # allowed the Actions column to shrink until the refresh button touched
+        # or clipped the "View Details" text.  Keep Actions protected first,
+        # then take space from the flexible text/progress columns.
+        admin_narrow = (self.width() and self.width() < 1500) or avail < 1375
+        if admin_narrow:
+            # Admin mode loses horizontal space to the left side panel.  Protect
+            # Size and Status first so values such as "15.2 GB" and the full
+            # SUSPICIOUS badge never wrap or clip, then let Filename / Hybrid
+            # Score absorb the remaining compression.
+            weights = [0.245, 0.145, 0.092, 0.148, 0.215, 0.155]
+            minima  = [168,   112,   82,    138,   140,   154]
+            floors  = [138,   100,   76,    128,   118,   148]
+        else:
+            # Analyst mode has more width, but still reserve enough space for
+            # the larger Size value and the wider SUSPICIOUS badge so both modes
+            # keep the same clean table rhythm.
+            weights = [0.255, 0.150, 0.088, 0.145, 0.220, 0.142]
+            minima  = [190,   120,   86,    142,   150,   142]
+            floors  = [150,   106,   78,    132,   124,   136]
+
+        widths = [max(mn, int(avail * w)) for w, mn in zip(weights, minima)]
+
+        # If the planned widths exceed the viewport, shrink flexible columns
+        # only.  The Status and Size columns are intentionally protected because
+        # those were the columns wrapping/clipping in Admin and Analyst views.
+        extra = sum(widths) - avail
+        if extra > 0:
+            for col in (4, 0, 1, 5):
+                take = min(extra, max(0, widths[col] - floors[col]))
+                widths[col] -= take
+                extra -= take
+                if extra <= 0:
+                    break
+        if extra > 0:
+            # Last resort for very narrow windows: allow minor compression, but
+            # keep Size and Status above their text-safe floors.
+            for col in (2, 3):
+                take = min(extra, max(0, widths[col] - floors[col]))
+                widths[col] -= take
+                extra -= take
+                if extra <= 0:
+                    break
+
+        # Put remaining rounding difference into the Hybrid Score column because
+        # it contains the most flexible internal meter.
+        diff = avail - sum(widths)
+        widths[4] = max(floors[4], widths[4] + diff)
+
+        hh = self.table.horizontalHeader()
+        for col, width in enumerate(widths):
+            try:
+                hh.setSectionResizeMode(col, QHeaderView.Fixed)
+                hh.resizeSection(col, int(width))
+            except Exception:
+                pass
+
+        for col, btn in enumerate(getattr(self, "_hist_header_buttons", []) or []):
+            try:
+                btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                btn.setFixedWidth(int(widths[col]))
+            except Exception:
+                pass
+
+    # ── Theme helpers ─────────────────────────────────────────────────────────
+
+    def _is_light_theme(self, theme: str | None = None) -> bool:
+        return (theme or current_theme() or "dark").strip().lower() == "light"
+
+    def _dashboard_colours(self, theme: str | None = None) -> dict:
+        if self._is_light_theme(theme):
+            return {
+                "row_bg": ("transparent", "transparent"),
+                "table_bg": "transparent",
+                "body_bg": "#ffffff",
+                "alt_bg": "transparent",
+                "hover_bg": "#eef4ff",
+                "selected_bg": "transparent",
+                "header_bg": "#eaf1ff",
+                "header_hover": "#dbeafe",
+                "text": "#1e3a6e",
+                "muted": "#5d76a9",
+                "border": "#d9e6ff",
+                "scroll_bg": "#eef4ff",
+                "scroll_handle": "#9fb7e5",
+            }
+        return {
+            "row_bg": ("transparent", "transparent"),
+            "table_bg": "transparent",
+            "body_bg": "#111827",
+            "alt_bg": "transparent",
+            "hover_bg": "rgba(51,65,85,0.45)",
+            "selected_bg": "transparent",
+            "header_bg": "#0d1523",
+            "header_hover": "rgba(6,182,212,0.07)",
+            "text": "#ffffff",
+            "muted": "#94a3b8",
+            "border": "rgba(51,65,85,0.50)",
+            "scroll_bg": "#0b1220",
+            "scroll_handle": "rgba(100,116,139,0.50)",
+        }
+
+    def _apply_table_style(self, theme: str | None = None) -> None:
+        c = self._dashboard_colours(theme)
+        self._row_bg = c["row_bg"]
+        self.table.setStyleSheet(f"""
+            QTableWidget#historyTable {{
+                background: {c['table_bg']};
+                color: {c['text']};
+                border: none;
+                border-radius: 0px;
+                alternate-background-color: {c['alt_bg']};
+                selection-background-color: {c['selected_bg']};
+            }}
+            QTableWidget#historyTable::item {{
+                padding: 0px 4px 0px 12px;
+                border: none;
+                color: {c['text']};
+            }}
+            QTableWidget#historyTable::item:alternate {{ background: transparent; }}
+            QTableWidget#historyTable::item:hover {{ background: {c['hover_bg']}; }}
+            QTableWidget#historyTable::item:selected {{ background: transparent; color: {c['text']}; }}
+            QTableWidget#historyTable QScrollBar:vertical {{
+                background: {c['scroll_bg']}; width: 8px; margin: 2px 1px 2px 0px; border-radius: 4px;
+            }}
+            QTableWidget#historyTable QScrollBar::handle:vertical {{
+                background: {c['scroll_handle']}; border-radius: 4px; min-height: 36px;
+            }}
+            QTableWidget#historyTable QScrollBar::add-line:vertical,
+            QTableWidget#historyTable QScrollBar::sub-line:vertical {{ height: 0px; background: transparent; }}
+            QTableWidget#historyTable QScrollBar::add-page:vertical,
+            QTableWidget#historyTable QScrollBar::sub-page:vertical {{ background: transparent; }}
+        """)
+        try:
+            self.table.setAutoFillBackground(False)
+            self.table.viewport().setAutoFillBackground(False)
+            self.table.setAttribute(Qt.WA_TranslucentBackground, True)
+            self.table.viewport().setAttribute(Qt.WA_TranslucentBackground, True)
+            self.table.viewport().setStyleSheet("background: transparent; border: none;")
+            _apply_rounded_widget_mask(getattr(self, "_history_card", None), 12)
+            self._clear_history_selection()
+        except Exception:
+            pass
+
+    def _apply_header_style(self, theme: str | None = None) -> None:
+        c = self._dashboard_colours(theme)
+        hh = self.table.horizontalHeader()
+        hh.setStyleSheet(f"""
+            QHeaderView {{ background: {c['header_bg']}; border: none; }}
+            QHeaderView::section {{
+                background: {c['header_bg']};
+                color: {c['muted']};
+                font-size: 12px;
+                font-weight: 700;
+                padding-left: 12px;
+                border: none;
+                border-bottom: 1px solid {c['border']};
+            }}
+        """)
+
+        # The table wrapper is the child that caused the visible rounded-border
+        # leak around the light-mode column header.  Style it directly; putting a
+        # QFrame#historyTableWrap selector inside the child header stylesheet does
+        # not affect the parent wrapper in Qt.
+        wrap = getattr(self, "_table_wrap", None)
+        if wrap is not None:
+            wrap.setStyleSheet(f"""
+                QFrame#historyTableWrap {{
+                    background: transparent;
+                    border: none;
+                    border-radius: 0px;
+                }}
+            """)
+
+        header = getattr(self, "_hist_header", None)
+        if header is not None:
+            header.setStyleSheet(f"""
+                QFrame#historyHeaderRow {{
+                    background: {c['header_bg']};
+                    border: none;
+                    border-bottom: 1px solid {c['border']};
+                    border-radius: 0px;
+                }}
+                QPushButton#historyHeaderCell {{
+                    background: {c['header_bg']};
+                    color: {c['muted']};
+                    border: none;
+                    border-radius: 0px;
+                    padding: 0px 8px 0px 12px;
+                    text-align: left;
+                    font-size: 12px;
+                    font-weight: 800;
+                }}
+                QPushButton#historyHeaderCell:hover {{
+                    background: {c['header_bg']};
+                    color: {c['text']};
+                }}
+            """)
+
+    def _clear_history_selection(self) -> None:
+        """Remove Qt's current-cell tint without assuming a specific binding API."""
+        try:
+            self.table.clearSelection()
+        except Exception:
+            pass
+        try:
+            self.table.setCurrentItem(None)
+            return
+        except Exception:
+            pass
+        try:
+            self.table.setCurrentCell(-1, -1)
+        except Exception:
+            pass
+
+    def apply_theme(self, theme: str | None = None, refresh_table: bool = True) -> None:
+        """Refresh Dashboard inline table/cell colours after theme changes."""
+        theme = (theme or current_theme() or "dark").strip().lower()
+        theme = "light" if theme == "light" else "dark"
+        page_bg = "#f0f5ff" if theme == "light" else "#0f172a"
+        self.setStyleSheet(f"QWidget#DashboardPage {{ background: {page_bg}; }}")
+        hdr = getattr(self, "_header", None)
+        if hdr is not None and hasattr(hdr, "apply_theme"):
+            hdr.apply_theme(theme)
+        if hasattr(self, "table"):
+            self._apply_table_style(theme)
+            self._apply_header_style(theme)
+            self._sync_history_columns()
+        if refresh_table and getattr(self, "_history", None):
+            self._populate_table(self._history)
 
     # ── Data loading ──────────────────────────────────────────────────────────
 
@@ -525,10 +767,30 @@ class DashboardPage(QWidget):
         if col in SORT_KEYS:
             history = sorted(history, key=SORT_KEYS[col], reverse=not asc)
 
+        # Remove old embedded widgets before rebuilding rows.  Without this,
+        # Qt may keep stale dark-mode badge/meter widgets visible after a
+        # light/dark switch, which is what caused the black rectangular blocks
+        # in the Dashboard table.
+        try:
+            for r in range(self.table.rowCount()):
+                for c in range(self.table.columnCount()):
+                    old_w = self.table.cellWidget(r, c)
+                    if old_w is not None:
+                        self.table.removeCellWidget(r, c)
+                        old_w.deleteLater()
+        except Exception:
+            pass
+
+        self._sync_history_columns()
         self.table.setRowCount(len(history))
+        self._clear_history_selection()
         for row, item in enumerate(history):
             self.table.setRowHeight(row, 54)
+            cols = self._dashboard_colours(current_theme())
             rbg = self._row_bg[row % 2]
+            text_col = QColor(cols["text"])
+            muted_col = QColor(cols["muted"])
+            row_col = None  # row backgrounds intentionally transparent
 
             # -- Col 0: Filename -------------------------------------------------
             # Use QTableWidgetItem instead of a QLabel cell widget so Qt can
@@ -536,7 +798,8 @@ class DashboardPage(QWidget):
             # extension. Full path/name remains available in the tooltip.
             fn_item = QTableWidgetItem(item["filename"])
             fn_item.setFont(QFont("Segoe UI", 11))
-            fn_item.setForeground(QColor("#ffffff"))
+            fn_item.setForeground(text_col)
+            # No cell background: the rounded history card owns the table body.
             fn_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             fn_item.setToolTip(item.get("dump_path", item["filename"]))
             self.table.setItem(row, 0, fn_item)
@@ -545,14 +808,16 @@ class DashboardPage(QWidget):
             dt_str = item["datetime"].strftime("%Y-%m-%d  %H:%M")
             dt = QTableWidgetItem(dt_str)
             dt.setFont(QFont("Segoe UI", 11))
-            dt.setForeground(QColor("#94a3b8"))
+            dt.setForeground(muted_col)
+            # No cell background: the rounded history card owns the table body.
             dt.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # ← add this
             self.table.setItem(row, 1, dt)
 
             # -- Col 2: Size  (2px left via QSS padding reduction) -------------
             sz = QTableWidgetItem(item["size"])
             sz.setFont(QFont("Segoe UI", 11))
-            sz.setForeground(QColor("#94a3b8"))
+            sz.setForeground(muted_col)
+            # No cell background: the rounded history card owns the table body.
             sz.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             sz.setData(Qt.UserRole, item.get("size_bytes", 0))
             self.table.setItem(row, 2, sz)
@@ -560,16 +825,34 @@ class DashboardPage(QWidget):
             # -- Col 3: Status badge  (3px left: margin 12->9) -----------------
             badge_cell = QWidget()
             badge_cell.setObjectName(f"bCell{row}")
-            badge_cell.setAutoFillBackground(True)
+            badge_cell.setAutoFillBackground(False)
+            badge_cell.setAttribute(Qt.WA_TranslucentBackground, True)
             badge_cell.setStyleSheet(
-                f"QWidget#bCell{row} {{ background: {rbg}; border: none; }}"
+                f"QWidget#bCell{row} {{ background: transparent; border: none; }}"
             )
             bl = QHBoxLayout(badge_cell)
-            bl.setContentsMargins(0, 0, 4, 0)
+            bl.setContentsMargins(0, 0, 0, 0)
             bl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            status_key = str(item["status"]).strip().lower()
             badge = StatusBadge(item["status"])
+            badge.setObjectName(f"DashboardStatusBadge{row}")
             badge.setAttribute(Qt.WA_StyledBackground, True)
             badge.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            # Wider fixed badges keep CLEAN/SUSPICIOUS centered inside the
+            # now-protected Status column without text clipping.
+            badge.setFixedWidth(96 if status_key == "clean" else 132)
+            if status_key == "suspicious":
+                bg_col = "rgba(248,113,113,0.14)" if not self._is_light_theme(current_theme()) else "#fff1f2"
+                br_col = "rgba(248,113,113,0.55)" if not self._is_light_theme(current_theme()) else "#fca5a5"
+            else:
+                bg_col = "rgba(52,211,153,0.14)" if not self._is_light_theme(current_theme()) else "#ecfdf5"
+                br_col = "rgba(52,211,153,0.55)" if not self._is_light_theme(current_theme()) else "#6ee7b7"
+            badge.setStyleSheet(
+                f"QWidget#DashboardStatusBadge{row} {{ "
+                f"background: {bg_col}; border: 1px solid {br_col}; "
+                f"border-radius: 14px; }}"
+                f"QWidget#DashboardStatusBadge{row} QLabel {{ background: transparent; border: none; }}"
+            )
             bl.addWidget(badge)
             bl.addStretch()
             self.table.setCellWidget(row, 3, badge_cell)
@@ -580,39 +863,61 @@ class DashboardPage(QWidget):
             hybrid_pct = _hybrid_score_pct(item)
             meter_cell = QWidget()
             meter_cell.setObjectName(f"mCell{row}")
-            meter_cell.setAutoFillBackground(True)
+            meter_cell.setAutoFillBackground(False)
+            meter_cell.setAttribute(Qt.WA_TranslucentBackground, True)
             meter_cell.setStyleSheet(
-                f"QWidget#mCell{row} {{ background: {rbg}; border: none; }}"
+                f"QWidget#mCell{row} {{ background: transparent; border: none; }}"
             )
             meter_cell.setToolTip(_hybrid_score_tooltip(item, hybrid_pct))
             ml = QHBoxLayout(meter_cell)
-            ml.setContentsMargins(0, 0, 8, 0)
+            # Keep the percentage label close to the bar and reserve enough
+            # label width so the trailing percent symbol is not clipped in the
+            # narrower Admin Console layout.
+            ml.setContentsMargins(0, 0, 2, 0)
+            ml.setSpacing(0)
             ml.setAlignment(Qt.AlignVCenter)
-            meter = ConfidenceMeter(hybrid_pct, item["status"], height=8)
+            meter = ConfidenceMeter(hybrid_pct, item["status"], height=8, label_width=60)
+            if meter.layout() is not None:
+                meter.layout().setSpacing(4)
+            try:
+                meter.bar.setMinimumWidth(90)
+                meter.bar.setMaximumWidth(360)
+            except Exception:
+                pass
             meter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            ml.addWidget(meter)
+            ml.addWidget(meter, stretch=1)
             self.table.setCellWidget(row, 4, meter_cell)
 
             # -- Col 5: Actions  (3px left: margin 8->5) ----------------------
             action_cell = QWidget()
             action_cell.setObjectName(f"aCell{row}")
-            action_cell.setAutoFillBackground(True)
+            action_cell.setAutoFillBackground(False)
+            action_cell.setAttribute(Qt.WA_TranslucentBackground, True)
             action_cell.setStyleSheet(
-                f"QWidget#aCell{row} {{ background: {rbg}; border: none; }}"
+                f"QWidget#aCell{row} {{ background: transparent; border: none; }}"
             )
             al = QHBoxLayout(action_cell)
-            al.setContentsMargins(0, 0, 16, 0)
-            al.setSpacing(4)
+            al.setContentsMargins(0, 0, 6, 0)
+            al.setSpacing(6)
             al.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
             view_btn = QPushButton("View Details →")
             view_btn.setObjectName("linkBtn")
             view_btn.setFont(QFont("Segoe UI", 11))
-            view_btn.setFixedWidth(116)
+            view_btn.setFixedWidth(112)
             view_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            view_btn.setStyleSheet(
-                "QPushButton#linkBtn { padding: 4px 0px 4px 0px; text-align: left; }"
-            )
+            if self._is_light_theme(current_theme()):
+                view_btn.setStyleSheet(
+                    "QPushButton#linkBtn { background: transparent; border: none; color: #1a56db; "
+                    "padding: 4px 0px 4px 0px; text-align: left; font-weight: 800; }"
+                    "QPushButton#linkBtn:hover { color: #174bbf; text-decoration: underline; }"
+                )
+            else:
+                view_btn.setStyleSheet(
+                    "QPushButton#linkBtn { background: transparent; border: none; color: #22d3ee; "
+                    "padding: 4px 0px 4px 0px; text-align: left; font-weight: 800; }"
+                    "QPushButton#linkBtn:hover { color: #67e8f9; text-decoration: underline; }"
+                )
             view_btn.clicked.connect(lambda _, h=item: self._view_details(h))
             al.addWidget(view_btn)
 
@@ -620,18 +925,25 @@ class DashboardPage(QWidget):
             if dump_path:
                 import os
                 rerun_btn = QPushButton("↺")
-                rerun_btn.setObjectName("iconBtn")
+                rerun_btn.setObjectName("DashboardRerunButton")
                 rerun_btn.setToolTip("Re-run analysis on this dump")
                 rerun_btn.setFont(QFont("Segoe UI", 13))
-                rerun_btn.setFixedSize(26, 26)
-                rerun_btn.setStyleSheet(
-                    "QPushButton#iconBtn {"
-                    "  padding: 0px; margin: 0px;"
-                    "  qproperty-iconSize: 0px;"
-                    "  text-align: center;"
-                    "  line-height: 26px;"
-                    "}"
-                )
+                rerun_btn.setFixedSize(24, 24)
+                set_variant(rerun_btn, "secondary")
+                if self._is_light_theme(current_theme()):
+                    rerun_btn.setStyleSheet(
+                        "QPushButton#DashboardRerunButton { background: #f8fbff; color: #1e3a6e; "
+                        "border: 1px solid #cfe0ff; border-radius: 8px; padding: 0px; margin: 0px; "
+                        "qproperty-iconSize: 0px; text-align: center; line-height: 26px; font-weight: 800; }"
+                        "QPushButton#DashboardRerunButton:hover { background: #eaf1ff; color: #1a56db; border-color: #1a56db; }"
+                    )
+                else:
+                    rerun_btn.setStyleSheet(
+                        "QPushButton#DashboardRerunButton { background: rgba(51,65,85,0.72); color: #dbeafe; "
+                        "border: 1px solid rgba(100,116,139,0.75); border-radius: 8px; padding: 0px; margin: 0px; "
+                        "qproperty-iconSize: 0px; text-align: center; line-height: 26px; font-weight: 800; }"
+                        "QPushButton#DashboardRerunButton:hover { background: rgba(6,182,212,0.18); color: #22d3ee; border-color: rgba(6,182,212,0.55); }"
+                    )
                 rerun_btn.clicked.connect(
                     lambda _, dp=dump_path, fn=item["filename"]: self._rerun(dp, fn)
                 )
@@ -640,8 +952,12 @@ class DashboardPage(QWidget):
             al.addStretch()
             self.table.setCellWidget(row, 5, action_cell)
 
-        # Update sort indicator in header
+        # Update sort indicator in header and remove Qt's current-cell tint.
         self._update_sort_indicators()
+        try:
+            self._clear_history_selection()
+        except Exception:
+            pass
 
     # ── Sort ──────────────────────────────────────────────────────────────────
 
@@ -659,14 +975,15 @@ class DashboardPage(QWidget):
     def _update_sort_indicators(self):
         hh = self.table.horizontalHeader()
         labels = ["Filename", "Date & Time", "Size", "Status", "Hybrid Score", "Actions"]
+        header_buttons = getattr(self, "_hist_header_buttons", [])
         for i, base in enumerate(labels):
+            text = base
             if i == self._sort_col and i != 5:
                 arrow = " ▲" if self._sort_asc else " ▼"
-                hh.model().setHeaderData(
-                    i, Qt.Horizontal, base + arrow
-                )
-            else:
-                hh.model().setHeaderData(i, Qt.Horizontal, base)
+                text = base + arrow
+            hh.model().setHeaderData(i, Qt.Horizontal, text)
+            if i < len(header_buttons):
+                header_buttons[i].setText(text.replace("&", "&&"))
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -768,10 +1085,13 @@ class DashboardPage(QWidget):
             # Larger windows get a taller table, but the card keeps a visible bottom margin.
             target_h = max(422, min(552, self.height() - 318))
             card.setFixedHeight(target_h)
+        if hasattr(self, "table"):
+            self._sync_history_columns()
 
     # ── Auto-refresh on show ──────────────────────────────────────────────────
 
     def showEvent(self, event):
         """Refresh stats and table every time this page becomes visible."""
         super().showEvent(event)
+        self._sync_history_columns()
         self._refresh_data()

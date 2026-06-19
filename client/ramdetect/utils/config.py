@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import os
 
+def _runtime_root() -> Path:
+    """Return active RAMDetect runtime root for configuration paths."""
+    import sys as _sys
+
+    try:
+        if getattr(_sys, "frozen", False):
+            return Path(_sys.executable).resolve().parent
+    except Exception:
+        pass
+
+    return Path(__file__).resolve().parent.parent.parent
+
+
 
 class ConfigManager:
     """
@@ -47,7 +60,7 @@ class ConfigManager:
         """Find config.yaml in current or parent directories"""
         search_paths = [
             Path.cwd() / "config.yaml",
-            Path(__file__).parent.parent.parent / "config.yaml",
+            _runtime_root() / "config.yaml",
             Path.home() / ".ramdetect" / "config.yaml",
         ]
         
@@ -148,10 +161,13 @@ class ConfigManager:
     # Convenience methods for common config access
     
     def get_path(self, path_key: str) -> Path:
-        """Get path from paths configuration"""
+        """Get path from paths configuration under active runtime root."""
         path_str = self.get(f'paths.{path_key}')
         if path_str:
-            return Path(path_str)
+            p = Path(path_str)
+            if p.is_absolute():
+                return p
+            return (_runtime_root() / p).resolve()
         raise KeyError(f"Path '{path_key}' not found in configuration")
     
     def get_ml_config(self, model_name: str) -> Dict:

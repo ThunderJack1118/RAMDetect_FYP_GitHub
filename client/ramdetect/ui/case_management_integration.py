@@ -25,7 +25,7 @@ import logging
 import socket
 import traceback
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget
 
 logger = logging.getLogger(__name__)
@@ -266,7 +266,8 @@ class CaseManagementIntegration(QObject):
 
         self._shell = QFrame()
         self._shell.setObjectName("AdminShell")
-        self._shell.setStyleSheet("QFrame#AdminShell { background: #0f172a; border: none; }")
+        self._shell.setFrameShape(QFrame.NoFrame)
+        self._shell.setAttribute(Qt.WA_StyledBackground, True)
 
         row = QHBoxLayout(self._shell)
         row.setContentsMargins(0, 0, 0, 0)

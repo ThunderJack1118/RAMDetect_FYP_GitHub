@@ -21,9 +21,11 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPixmap
+from PyQt5.QtGui import QColor, QFont, QPixmap, QImage
 from PyQt5.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -49,23 +51,60 @@ def _ui_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _logo_path() -> Path:
-    return _ui_base_dir() / "resources" / "photo" / "ramdetect.png"
+def _logo_path(theme: str | None = None) -> Path:
+    """Return a readable logo for the current login theme."""
+    photo = _ui_base_dir() / "resources" / "photo"
+    theme = (theme or current_theme() or "dark").strip().lower()
+    if theme == "light":
+        candidates = [
+            photo / "ramdetect_blue.jpg",
+            photo / "ramdetect_black.png",
+            photo / "ramdetect.png",
+        ]
+    else:
+        candidates = [
+            photo / "RAMDETECT-LOGO-CLEAN.png",
+            photo / "ramdetect.png",
+            photo / "ramdetect_black.png",
+        ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return photo / "ramdetect.png"
 
 
-def _crop_logo_pixmap(pixmap: QPixmap) -> QPixmap:
-    """Crop dark canvas around RAMDetect logo before scaling."""
+def _crop_logo_pixmap(pixmap: QPixmap, theme: str | None = None) -> QPixmap:
+    """Crop large transparent/light/dark canvas around RAMDetect logo."""
     if pixmap.isNull():
         return pixmap
 
-    img = pixmap.toImage()
+    theme = (theme or current_theme() or "dark").strip().lower()
+    img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
     w, h = img.width(), img.height()
-    min_x, min_y, max_x, max_y = w, h, -1, -1
+    if w <= 1 or h <= 1:
+        return pixmap
 
+    # Detect background from corners. White JPG logos need the white canvas removed;
+    # clean dark PNG logos need the black canvas removed.
+    corners = [
+        img.pixelColor(0, 0), img.pixelColor(w - 1, 0),
+        img.pixelColor(0, h - 1), img.pixelColor(w - 1, h - 1),
+    ]
+    avg = sum((c.red() + c.green() + c.blue()) / 3 for c in corners) / len(corners)
+    light_canvas = avg >= 180
+
+    min_x, min_y, max_x, max_y = w, h, -1, -1
     for y in range(h):
         for x in range(w):
             c: QColor = img.pixelColor(x, y)
-            if c.alpha() > 10 and max(c.red(), c.green(), c.blue()) > 42:
+            if c.alpha() <= 10:
+                continue
+            bright = (c.red() + c.green() + c.blue()) / 3
+            if light_canvas:
+                is_content = not (c.red() >= 236 and c.green() >= 236 and c.blue() >= 236)
+            else:
+                is_content = bright > 42
+            if is_content:
                 min_x = min(min_x, x)
                 min_y = min(min_y, y)
                 max_x = max(max_x, x)
@@ -74,12 +113,12 @@ def _crop_logo_pixmap(pixmap: QPixmap) -> QPixmap:
     if max_x <= min_x or max_y <= min_y:
         return pixmap
 
-    pad = 18
+    pad = max(8, int(max(max_x - min_x, max_y - min_y) * 0.08))
     min_x = max(0, min_x - pad)
     min_y = max(0, min_y - pad)
     max_x = min(w - 1, max_x + pad)
     max_y = min(h - 1, max_y + pad)
-    return pixmap.copy(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+    return QPixmap.fromImage(img.copy(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 
 
 def _validate_login_input(username: str, password: str) -> tuple[bool, str]:
@@ -136,34 +175,6 @@ class _LoginToast(QFrame):
         self.setObjectName("LoginToast")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
-        self.setStyleSheet("""
-            QFrame#LoginToast {
-                background: rgba(17, 24, 39, 0.98);
-                border: 1px solid rgba(239, 68, 68, 0.68);
-                border-radius: 10px;
-            }
-            QLabel#ToastIcon {
-                color: #fecaca;
-                font-size: 15px;
-                font-weight: 900;
-                background: transparent;
-                border: none;
-            }
-            QLabel#ToastTitle {
-                color: #fecaca;
-                font-size: 11px;
-                font-weight: 800;
-                background: transparent;
-                border: none;
-            }
-            QLabel#ToastBody {
-                color: #cbd5e1;
-                font-size: 9px;
-                background: transparent;
-                border: none;
-            }
-        """)
-
         row = QHBoxLayout(self)
         row.setContentsMargins(12, 9, 12, 9)
         row.setSpacing(9)
@@ -172,11 +183,6 @@ class _LoginToast(QFrame):
         icon.setObjectName("ToastIcon")
         icon.setFixedSize(24, 24)
         icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet(
-            "background: rgba(127, 29, 29, 0.35);"
-            "border: 1px solid rgba(239, 68, 68, 0.55);"
-            "border-radius: 12px; color: #fecaca; font-weight: 900;"
-        )
 
         text_box = QVBoxLayout()
         text_box.setContentsMargins(0, 0, 0, 0)
@@ -286,40 +292,7 @@ class LoginPage(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         self.setObjectName("LoginPage")
-        self.setStyleSheet("""
-            QWidget#LoginPage {
-                background: #0f172a;
-                font-family: 'Segoe UI';
-            }
-            QLabel {
-                background: transparent;
-                border: none;
-            }
-            QLineEdit#LoginField {
-                background: #111827;
-                color: #e5e7eb;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 0 12px;
-                font-size: 12px;
-                selection-background-color: #2563eb;
-            }
-            QLineEdit#LoginField:hover {
-                border: 1px solid #475569;
-            }
-            QLineEdit#LoginField:focus {
-                border: 1px solid #22d3ee;
-                background: #172133;
-            }
-            QLineEdit#LoginField[error="true"] {
-                border: 1px solid #ef4444;
-                background: rgba(127, 29, 29, 0.16);
-            }
-            QLineEdit#LoginField[error="true"]:focus {
-                border: 1px solid #f87171;
-                background: rgba(127, 29, 29, 0.18);
-            }
-        """)
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -331,13 +304,6 @@ class LoginPage(QWidget):
         card.setObjectName("LoginCard")
         card.setFixedWidth(430)
         card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
-        card.setStyleSheet("""
-            QFrame#LoginCard {
-                background: #1b2232;
-                border: 1px solid #33415f;
-                border-radius: 16px;
-            }
-        """)
 
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(30, 26, 30, 24)
@@ -345,14 +311,10 @@ class LoginPage(QWidget):
 
         # ── Logo ──────────────────────────────────────────────────────
         logo = QLabel()
+        self._logo_label = logo
         logo.setAlignment(Qt.AlignCenter)
-        logo.setStyleSheet("background: transparent; border: none;")
-        if _logo_path().exists():
-            pixmap = _crop_logo_pixmap(QPixmap(str(_logo_path())))
-            logo.setPixmap(pixmap.scaled(58, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            logo.setText("RD")
-            logo.setStyleSheet("color: #e2e8f0; font-size: 18px; font-weight: 700; background: transparent; border: none;")
+        set_role(logo, "transparent")
+        self._apply_logo(current_theme())
         card_layout.addWidget(logo)
         card_layout.addSpacing(3)
 
@@ -360,41 +322,27 @@ class LoginPage(QWidget):
         title = QLabel("RAMDetect")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Segoe UI", 29, QFont.Bold))
-        title.setStyleSheet("""
-            color: #f8fafc;
-            letter-spacing: 0.3px;
-            background: transparent;
-            border: none;
-        """)
+        set_tone(title, "#f8fafc")
         card_layout.addWidget(title)
 
         subtitle = QLabel("Staff Access Login")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
-        subtitle.setStyleSheet("""
-            color: #93b4f7;
-            background: transparent;
-            border: none;
-        """)
+        set_tone(subtitle, "#93b4f7")
         card_layout.addWidget(subtitle)
 
         # Old-style subtle divider.
         divider = QFrame()
         divider.setFixedHeight(1)
-        divider.setStyleSheet("background: #2b3652; border: none;")
+        set_role(divider, "divider")
         card_layout.addSpacing(10)
         card_layout.addWidget(divider)
         card_layout.addSpacing(12)
 
         # ── Username ─────────────────────────────────────────────────
         lbl_user = QLabel("Username")
-        lbl_user.setStyleSheet("""
-            color: #dbeafe;
-            font-size: 11px;
-            font-weight: 600;
-            background: transparent;
-            border: none;
-        """)
+        lbl_user.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        set_tone(lbl_user, "#dbeafe")
         card_layout.addWidget(lbl_user)
 
         self._username = QLineEdit()
@@ -415,13 +363,8 @@ class LoginPage(QWidget):
 
         # ── Password ─────────────────────────────────────────────────
         lbl_pass = QLabel("Password")
-        lbl_pass.setStyleSheet("""
-            color: #dbeafe;
-            font-size: 11px;
-            font-weight: 600;
-            background: transparent;
-            border: none;
-        """)
+        lbl_pass.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        set_tone(lbl_pass, "#dbeafe")
         card_layout.addWidget(lbl_pass)
 
         self._password = QLineEdit()
@@ -451,36 +394,12 @@ class LoginPage(QWidget):
         self._btn_login.setMaximumHeight(36)
         self._btn_login.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
         self._btn_login.clicked.connect(self._on_login)
-        self._btn_login.setStyleSheet("""
-            QPushButton#LoginPrimaryButton {
-                background: #3b82f6;
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton#LoginPrimaryButton:hover {
-                background: #2563eb;
-            }
-            QPushButton#LoginPrimaryButton:pressed {
-                background: #1d4ed8;
-            }
-            QPushButton#LoginPrimaryButton:disabled {
-                background: #1e3a8a;
-                color: #94a3b8;
-            }
-        """)
         card_layout.addWidget(self._btn_login)
 
         hint = QLabel("Default: admin / admin123")
         hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet("""
-            color: #64748b;
-            font-size: 9px;
-            background: transparent;
-            border: none;
-        """)
+        hint.setFont(QFont("Segoe UI", 9))
+        set_tone(hint, "#64748b")
         card_layout.addSpacing(7)
         card_layout.addWidget(hint)
 
@@ -488,6 +407,40 @@ class LoginPage(QWidget):
 
         self._toast = _LoginToast(self)
         self._username.setFocus()
+
+    # ------------------------------------------------------------------
+    def _apply_logo(self, theme: str | None = None) -> None:
+        logo = getattr(self, "_logo_label", None)
+        if logo is None:
+            return
+        path = _logo_path(theme)
+        if path.exists():
+            pixmap = _crop_logo_pixmap(QPixmap(str(path)), theme)
+            logo.setPixmap(pixmap.scaled(58, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo.setText("")
+            logo.setToolTip(str(path))
+        else:
+            logo.setPixmap(QPixmap())
+            logo.setText("RD")
+            logo.setFont(QFont("Segoe UI", 18, QFont.Bold))
+            set_tone(logo, "#1e3a6e" if (theme or current_theme()) == "light" else "#e2e8f0")
+
+    # ------------------------------------------------------------------
+    def apply_theme(self, theme: str | None = None) -> None:
+        """Refresh login logo and page surface after runtime Light/Dark switching."""
+        active = (theme or current_theme() or "dark").strip().lower()
+        active = "light" if active == "light" else "dark"
+        bg = "#f0f5ff" if active == "light" else "#0f172a"
+        # Force the top-level LoginPage to paint its own background.  Without
+        # this, the previous dark parent surface could remain visible behind the
+        # light login card after live theme switching.
+        self.setStyleSheet(f"QWidget#LoginPage {{ background: {bg}; }}")
+        self._apply_logo(active)
+
+    # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.apply_theme(current_theme())
 
     # ------------------------------------------------------------------
     def resizeEvent(self, event) -> None:

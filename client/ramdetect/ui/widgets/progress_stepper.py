@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
                               QLabel, QFrame)
 from PyQt5.QtCore    import Qt
 from PyQt5.QtGui     import QFont
+from ui.style_helpers import set_role, set_tone, set_state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,12 +91,6 @@ class ProgressStepper(QWidget):
         """
         super().__init__(parent)
         self.setFixedHeight(68)
-        self.setStyleSheet(
-            "ProgressStepper {"
-            "  background: rgba(15,23,42,0.60);"
-            "  border-bottom: 1px solid rgba(51,65,85,0.30);"
-            "}"
-        )
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -117,7 +112,8 @@ class ProgressStepper(QWidget):
             circle.setAlignment(Qt.AlignCenter)
             circle.setFixedSize(34, 34)
             circle.setFont(QFont("Segoe UI", 13, QFont.Bold))
-            circle.setStyleSheet(_CIRCLE_STYLES[state])
+            circle.setObjectName("StepCircle")
+            set_state(circle, state)
 
             # ── Label ─────────────────────────────────────────────────────────
             step_lbl = QLabel(label_text)
@@ -125,9 +121,8 @@ class ProgressStepper(QWidget):
                 "Segoe UI", 10,
                 QFont.DemiBold if is_bold else QFont.Normal
             ))
-            step_lbl.setStyleSheet(
-                f"color: {txt_color}; background: transparent;"
-            )
+            step_lbl.setObjectName("StepLabel")
+            set_state(step_lbl, state)
             step_lbl.setAlignment(Qt.AlignCenter)
 
             # ── Step column ───────────────────────────────────────────────────
@@ -138,7 +133,7 @@ class ProgressStepper(QWidget):
             step_col.addWidget(step_lbl, alignment=Qt.AlignCenter)
 
             step_w = QWidget()
-            step_w.setStyleSheet("background: transparent;")
+            set_role(step_w, "transparent")
             step_w.setLayout(step_col)
             step_w.setMinimumWidth(90)
             inner.addWidget(step_w)
@@ -151,9 +146,8 @@ class ProgressStepper(QWidget):
                 track = QFrame()
                 track.setFixedHeight(3)
                 track.setFixedWidth(60)
-                track.setStyleSheet(
-                    f"background: #1e293b; border-radius: 2px;"
-                )
+                track.setObjectName("StepConnector")
+                set_state(track, "todo")
 
                 # Inner fill (shows progress)
                 fill_pct = (
@@ -165,9 +159,8 @@ class ProgressStepper(QWidget):
                     fill_w = max(4, int(60 * fill_pct))
                     fill = QFrame(track)
                     fill.setGeometry(0, 0, fill_w, 3)
-                    fill.setStyleSheet(
-                        f"background: {conn_col}; border-radius: 2px;"
-                    )
+                    fill.setObjectName("StepConnector")
+                    set_state(fill, "done" if conn_col == "#34d399" else "partial")
 
                 inner.addWidget(track, alignment=Qt.AlignVCenter)
 

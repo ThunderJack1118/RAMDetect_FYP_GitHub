@@ -36,6 +36,94 @@ from ui.bridge.session           import AppState
 from ui.bridge.config_bridge     import Config
 from ui.bridge.ml_bridge         import MLBridge
 from ui.bridge.report_bridge     import ReportBridge
+from ui.style_helpers import set_role, set_tone, refresh_style
+from ui.theme import current_theme
+
+
+def _theme_name() -> str:
+    return "light" if str(current_theme()).strip().lower() == "light" else "dark"
+
+
+def _is_light() -> bool:
+    return _theme_name() == "light"
+
+
+def _map_color(color: str) -> str:
+    if not _is_light():
+        return color
+    c = (color or "").strip().lower().replace(" ", "")
+    mapping = {
+        "#ffffff": "#1e3a6e",
+        "white": "#1e3a6e",
+        "#e2e8f0": "#1e3a6e",
+        "#cbd5e1": "#2f4f85",
+        "#94a3b8": "#5f75a6",
+        "#64748b": "#6f82aa",
+        "#475569": "#8ba0c7",
+        "#1e293b": "#ffffff",
+    }
+    return mapping.get(c, color)
+
+
+def _card_qss(radius: int = 10, border: str | None = None, strong: bool = False) -> str:
+    if _is_light():
+        bg = "#ffffff"
+        br = border or "#9ec5ff"
+        bw = "2px" if strong else "1px"
+        return f"QFrame {{ background: {bg}; border: {bw} solid {br}; border-radius: {radius}px; }}"
+    bg = "rgba(30,41,59,0.45)"
+    br = border or "rgba(51,65,85,0.5)"
+    bw = "2px" if strong else "1px"
+    return f"QFrame {{ background: {bg}; border: {bw} solid {br}; border-radius: {radius}px; }}"
+
+
+def _muted_border() -> str:
+    return "#b9d2ff" if _is_light() else "rgba(51,65,85,0.4)"
+
+
+def _soft_surface() -> str:
+    return "#f8fbff" if _is_light() else "rgba(51,65,85,0.22)"
+
+
+def _results_scrollbar_qss() -> str:
+    if _is_light():
+        return (
+            "QScrollBar:vertical { background: #eef4ff; width: 8px; border-radius: 4px; margin: 0px; }"
+            "QScrollBar::handle:vertical { background: #9fb7e5; border-radius: 4px; min-height: 28px; }"
+            "QScrollBar::handle:vertical:hover { background: #1a56db; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: transparent; }"
+        )
+    return (
+        "QScrollBar:vertical { background: rgba(15,23,42,0.55); width: 8px; border-radius: 4px; margin: 0px; }"
+        "QScrollBar::handle:vertical { background: rgba(71,85,105,0.85); border-radius: 4px; min-height: 28px; }"
+        "QScrollBar::handle:vertical:hover { background: #06b6d4; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: transparent; }"
+    )
+
+
+def _findings_scroll_qss() -> str:
+    return "QScrollArea{background:transparent;border:none;}" + _results_scrollbar_qss()
+
+
+def _context_bar_qss() -> str:
+    if _is_light():
+        return (
+            "QFrame#ResultsContextBar { background: #ffffff; border: 1px solid #9ec5ff;"
+            " border-radius: 12px; margin: 0px; }"
+        )
+    return (
+        "QFrame#ResultsContextBar { background: rgba(30,41,59,0.75);"
+        " border: 1px solid rgba(6,182,212,0.30);"
+        " border-radius: 12px; margin: 0px; }"
+    )
+
+
+def _toast_colors(success: bool):
+    if _is_light():
+        return ("#16a34a", "#f0fdf7") if success else ("#dc2626", "#fff7f7")
+    return ("#34d399", "rgba(17,51,34,0.97)") if success else ("#f87171", "rgba(60,17,17,0.97)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +151,10 @@ _EXTRACTOR_FEATURE_COUNTS = {
 }
 _DEFAULT_EXTRACTOR_MODULES = tuple(_EXTRACTOR_FEATURE_COUNTS.keys())
 
+# Match HeaderBar's horizontal page margin so the Results context bar and body
+# cards align with the global header controls.
+_RESULTS_PAGE_MARGIN = 40
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tiny widget helpers
@@ -70,23 +162,17 @@ _DEFAULT_EXTRACTOR_MODULES = tuple(_EXTRACTOR_FEATURE_COUNTS.keys())
 
 def _card(radius: int = 10) -> QFrame:
     f = QFrame()
-    f.setStyleSheet(
-        f"QFrame {{"
-        f"  background: rgba(30,41,59,0.45);"
-        f"  border: 1px solid rgba(51,65,85,0.5);"
-        f"  border-radius: {radius}px; }}"
-    )
+    f.setObjectName("ResultsPanelCard")
+    f.setAttribute(Qt.WA_StyledBackground, True)
+    f.setStyleSheet(_card_qss(radius))
     return f
 
 
 def _bordered_card(border_col: str, radius: int = 10) -> QFrame:
     f = QFrame()
-    f.setStyleSheet(
-        f"QFrame {{"
-        f"  background: rgba(30,41,59,0.45);"
-        f"  border: 2px solid {border_col};"
-        f"  border-radius: {radius}px; }}"
-    )
+    f.setObjectName("ResultsPanelCard")
+    f.setAttribute(Qt.WA_StyledBackground, True)
+    f.setStyleSheet(_card_qss(radius, border_col, strong=True))
     return f
 
 
@@ -96,7 +182,7 @@ def _lbl(text: str, size: int = 11, bold: bool = False,
     l = QLabel(text)
     weight = "700" if bold else "400"
     l.setStyleSheet(
-        f"color:{color};background:transparent;border:none;"
+        f"color:{_map_color(color)};background:transparent;border:none;"
         f"font-size:{size}px;font-weight:{weight};"
     )
     if wrap:
@@ -109,7 +195,7 @@ def _lbl(text: str, size: int = 11, bold: bool = False,
 def _hdiv() -> QFrame:
     d = QFrame()
     d.setFixedHeight(1)
-    d.setStyleSheet("background:rgba(51,65,85,0.5);border:none;")
+    d.setStyleSheet(f"background:{_muted_border()};border:none;")
     return d
 
 
@@ -119,7 +205,7 @@ def _icon_circle(char: str, size: int, bg: str, fg: str,
     lbl.setFixedSize(size, size)
     lbl.setAlignment(Qt.AlignCenter)
     lbl.setStyleSheet(
-        f"background:{bg};border-radius:{size//2}px;color:{fg};border:none;"
+        f"background:{bg};border-radius:{size//2}px;color:{_map_color(fg)};border:none;"
         f"font-size:{font_pt}px;padding-bottom:2px;"
     )
     return lbl
@@ -127,7 +213,7 @@ def _icon_circle(char: str, size: int, bg: str, fg: str,
 
 def _nav_btn(text: str, page: str, mw) -> QPushButton:
     b = QPushButton(text)
-    b.setObjectName("iconBtn")
+    b.setObjectName("ResultsNavButton")
     b.setFont(QFont("Segoe UI", 11))
     b.setFixedHeight(36)
     b.clicked.connect(lambda: mw.navigate_to(page))
@@ -165,8 +251,7 @@ class _ExportToast(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
 
-        border = "#34d399" if success else "#f87171"
-        bg     = "rgba(17,51,34,0.97)" if success else "rgba(60,17,17,0.97)"
+        border, bg = _toast_colors(success)
         icon   = "✓" if success else "✗"
 
         outer = QVBoxLayout(self)
@@ -219,8 +304,10 @@ class _ExportToast(QWidget):
 class ResultsDashboardPage(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.setObjectName("ResultsDashboardPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.mw = main_window
-        self.setStyleSheet("background:transparent;")
+        set_role(self, "transparent")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -228,6 +315,11 @@ class ResultsDashboardPage(QWidget):
 
         # Header
         hdr = HeaderBar(show_action=False, show_dashboard=True)
+        # Results is the only compact page that previously used a different
+        # body margin than HeaderBar. Keep all horizontal edges under one
+        # global margin constant.
+        if hdr.layout() is not None:
+            hdr.layout().setContentsMargins(_RESULTS_PAGE_MARGIN, 0, _RESULTS_PAGE_MARGIN, 0)
         hdr.dashboard_clicked.connect(lambda: self.mw.navigate_to("dashboard"))
         hdr.settings_clicked.connect(lambda: self.mw.navigate_to("settings"))
         root.addWidget(hdr)
@@ -237,15 +329,10 @@ class ResultsDashboardPage(QWidget):
 
         # ── Context bar (filename / date / size / arch) ───────────────────────
         self._ctx_bar = QFrame()
+        self._ctx_bar.setObjectName("ResultsContextBar")
+        self._ctx_bar.setAttribute(Qt.WA_StyledBackground, True)
         self._ctx_bar.setFixedHeight(44)
-        self._ctx_bar.setStyleSheet(
-            "QFrame {"
-            "  background: rgba(30,41,59,0.75);"
-            "  border: 1px solid rgba(6,182,212,0.3);"
-            "  border-radius: 12px;"
-            "  margin: 6px 28px 6px 28px;"
-            "}"
-        )
+        self._ctx_bar.setStyleSheet(_context_bar_qss())
         ctx_row = QHBoxLayout(self._ctx_bar)
         ctx_row.setContentsMargins(16, 0, 16, 0)
         ctx_row.setSpacing(8)
@@ -253,36 +340,47 @@ class ResultsDashboardPage(QWidget):
         # Left stretch to centre the content horizontally
         ctx_row.addStretch()
 
-        ctx_icon = QLabel("📁")
-        ctx_icon.setStyleSheet(
+        self._ctx_icon = QLabel("📁")
+        self._ctx_icon.setStyleSheet(
             "color:#06b6d4;background:transparent;border:none;font-size:13px;"
         )
-        ctx_icon.setFixedWidth(24)
+        self._ctx_icon.setFixedWidth(24)
 
         self._ctx_filename = QLabel("—")
         self._ctx_filename.setStyleSheet(
-            "color:#e2e8f0;background:transparent;border:none;"
+            f"color:{_map_color('#e2e8f0')};background:transparent;border:none;"
             "font-size:12px;font-weight:600;"
         )
 
         self._ctx_meta = QLabel("")
         self._ctx_meta.setStyleSheet(
-            "color:#94a3b8;background:transparent;border:none;font-size:11px;"
+            f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:11px;"
         )
 
-        ctx_row.addWidget(ctx_icon, alignment=Qt.AlignVCenter)
+        ctx_row.addWidget(self._ctx_icon, alignment=Qt.AlignVCenter)
         ctx_row.addWidget(self._ctx_filename, alignment=Qt.AlignVCenter)
         ctx_row.addWidget(self._ctx_meta, alignment=Qt.AlignVCenter)
 
         # Right stretch to keep content centred
         ctx_row.addStretch()
-        root.addWidget(self._ctx_bar)
+
+        # HeaderBar uses 40 px horizontal page margins. Keep the Results
+        # context strip inside the same margin system so its right edge aligns
+        # with the header controls and other page content.
+        self._ctx_wrap = QWidget()
+        self._ctx_wrap.setObjectName("ResultsContextWrap")
+        set_role(self._ctx_wrap, "transparent")
+        ctx_wrap_l = QHBoxLayout(self._ctx_wrap)
+        ctx_wrap_l.setContentsMargins(_RESULTS_PAGE_MARGIN, 0, _RESULTS_PAGE_MARGIN, 0)
+        ctx_wrap_l.setSpacing(0)
+        ctx_wrap_l.addWidget(self._ctx_bar)
+        root.addWidget(self._ctx_wrap)
 
         # Body (rebuilt on showEvent)
         self._body = QWidget()
-        self._body.setStyleSheet("background:transparent;")
+        set_role(self._body, "transparent")
         self._body_layout = QHBoxLayout(self._body)
-        self._body_layout.setContentsMargins(28, 10, 28, 10)
+        self._body_layout.setContentsMargins(_RESULTS_PAGE_MARGIN, 10, _RESULTS_PAGE_MARGIN, 20)
         self._body_layout.setSpacing(16)
         root.addWidget(self._body, stretch=1)
 
@@ -291,9 +389,7 @@ class ResultsDashboardPage(QWidget):
         self._export_lbl.setFont(QFont("Segoe UI", 10))
         self._export_lbl.setAlignment(Qt.AlignCenter)
         self._export_lbl.setFixedHeight(20)
-        self._export_lbl.setStyleSheet(
-            "color:#34d399;background:transparent;border:none;"
-        )
+        set_tone(self._export_lbl, "#34d399")
         root.addWidget(self._export_lbl)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -312,6 +408,7 @@ class ResultsDashboardPage(QWidget):
         ml   = sess.ml_result
 
         # ── Update context bar ────────────────────────────────────────────────
+        self._style_context_bar()
         fname = sess.dump_filename or "unknown dump"
         if len(fname) > 60:
             fname = fname[:57] + "…"
@@ -372,7 +469,7 @@ class ResultsDashboardPage(QWidget):
             f"padding-bottom:2px;"
         )
         vc_vb.addWidget(ic_outer, alignment=Qt.AlignCenter)
-        vc_vb.addSpacing(8)
+        vc_vb.addSpacing(2)
 
         v_lbl = QLabel(verdict.upper())
         v_lbl.setAlignment(Qt.AlignCenter)
@@ -385,12 +482,17 @@ class ResultsDashboardPage(QWidget):
         desc = ("Potential malicious activity detected in memory dump"
                 if is_susp else "No significant threats detected in memory dump")
         desc_lbl = QLabel(desc)
-        desc_lbl.setWordWrap(True)
+        # Keep the short verdict explanation on one line.
+        # With word-wrap enabled, Qt may shrink the label and wrap only the
+        # final word ("dump") on high-DPI displays.
+        desc_lbl.setWordWrap(False)
+        desc_lbl.setMinimumWidth(360)
+        desc_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         desc_lbl.setAlignment(Qt.AlignCenter)
         desc_lbl.setStyleSheet(
-            "color:#94a3b8;background:transparent;border:none;font-size:10px;"
+            f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:10px;"
         )
-        vc_vb.addWidget(desc_lbl)
+        vc_vb.addWidget(desc_lbl, alignment=Qt.AlignCenter)
 
         conf_row = QHBoxLayout()
         conf_row.setAlignment(Qt.AlignCenter)
@@ -398,7 +500,7 @@ class ResultsDashboardPage(QWidget):
         # FIX: Explicitly label this as Confidence!
         conf_lbl = QLabel("Hybrid Score:")
         conf_lbl.setStyleSheet(
-            "color:#94a3b8;background:transparent;border:none;font-size:11px;"
+            f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:11px;"
         )
         conf_row.addWidget(conf_lbl)
         _disp_conf = conf * 100.0 if conf <= 1.0 else conf
@@ -433,9 +535,9 @@ class ResultsDashboardPage(QWidget):
         rec_err = sess.ml_result.get("reconstruction_error", 0.0)
         err_row = QHBoxLayout()
         err_lbl = QLabel("1. Autoencoder MSE:")
-        err_lbl.setStyleSheet("color:#94a3b8;background:transparent;border:none;font-size:11px;")
+        err_lbl.setStyleSheet(f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:11px;")
         err_val = QLabel(f"{rec_err:.6f}")
-        err_val.setStyleSheet("color:#ffffff;background:transparent;border:none;font-size:11px;font-weight:600;")
+        err_val.setStyleSheet(f"color:{_map_color('#ffffff')};background:transparent;border:none;font-size:11px;font-weight:600;")
         err_row.addWidget(err_lbl)
         err_row.addStretch()
         err_row.addWidget(err_val)
@@ -445,9 +547,9 @@ class ResultsDashboardPage(QWidget):
         disp_rf = rf * 100.0 if rf <= 1.0 else rf
         rf_row = QHBoxLayout()
         rf_lbl = QLabel("2. RF Suspicion Score:")
-        rf_lbl.setStyleSheet("color:#94a3b8;background:transparent;border:none;font-size:11px;")
+        rf_lbl.setStyleSheet(f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:11px;")
         rf_val = QLabel(f"{disp_rf:.2f}%")
-        rf_val.setStyleSheet("color:#ffffff;background:transparent;border:none;font-size:11px;font-weight:600;")
+        rf_val.setStyleSheet(f"color:{_map_color('#ffffff')};background:transparent;border:none;font-size:11px;font-weight:600;")
         rf_row.addWidget(rf_lbl)
         rf_row.addStretch()
         rf_row.addWidget(rf_val)
@@ -459,7 +561,7 @@ class ResultsDashboardPage(QWidget):
         fr = QHBoxLayout()
         # FIX: Rename to Final Confidence
         final_lbl = QLabel("Final Hybrid Score:")
-        final_lbl.setStyleSheet("color:#ffffff;background:transparent;border:none;font-size:11px;font-weight:700;")
+        final_lbl.setStyleSheet(f"color:{_map_color('#ffffff')};background:transparent;border:none;font-size:11px;font-weight:700;")
         fv = QLabel(f"{disp_conf:.2f}%")
         fv.setStyleSheet(f"color:{v_col};background:transparent;border:none;font-size:12px;font-weight:700;")
         fr.addWidget(final_lbl)
@@ -468,7 +570,7 @@ class ResultsDashboardPage(QWidget):
         ml_vb.addLayout(fr)
 
         formula_lbl = QLabel("Logic: RF-AE uses 54 canonical CIC-MalMem features + Autoencoder MSE (55 fused RF inputs). Decision threshold: RF Suspicion >= 50.0% = SUSPICIOUS; below 50.0% = CLEAN.")
-        formula_lbl.setStyleSheet("color:#64748b;background:transparent;border:none;font-size:9px;")
+        formula_lbl.setStyleSheet(f"color:{_map_color('#64748b')};background:transparent;border:none;font-size:9px;")
         formula_lbl.setWordWrap(True)
         ml_vb.addWidget(formula_lbl)
         col.addWidget(ml_card)
@@ -545,9 +647,7 @@ class ResultsDashboardPage(QWidget):
 
         for i, (k, v, vc, tooltip) in enumerate(stats_data):
             cell = QFrame()
-            cell.setStyleSheet(
-                "QFrame{background:rgba(51,65,85,0.22);border-radius:6px;border:none;}"
-            )
+            cell.setStyleSheet(f"QFrame{{background:{_soft_surface()};border:1px solid {_muted_border()};border-radius:6px;}}")
             cell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             cv = QVBoxLayout(cell)
             cv.setContentsMargins(6, 4, 6, 4)
@@ -565,11 +665,11 @@ class ResultsDashboardPage(QWidget):
                 )
 
             lk = QLabel(k)
-            lk.setStyleSheet("color:#94a3b8;background:transparent;border:none;font-size:8px;")
+            lk.setStyleSheet(f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:8px;")
             cv.addWidget(lk)
 
             vl = QLabel(v)
-            vl.setStyleSheet(f"color:{vc};background:transparent;border:none;font-size:10px;font-weight:700;")
+            vl.setStyleSheet(f"color:{_map_color(vc)};background:transparent;border:none;font-size:10px;font-weight:700;")
             cv.addWidget(vl)
 
             grid.addWidget(cell, i // 2, i % 2)
@@ -603,10 +703,7 @@ class ResultsDashboardPage(QWidget):
 
         fhdr = QFrame()
         fhdr.setFixedHeight(46)
-        fhdr.setStyleSheet(
-            "QFrame{background:transparent;border:none;"
-            "border-bottom:1px solid rgba(51,65,85,0.4);border-radius:0px;}"
-        )
+        fhdr.setStyleSheet(f"QFrame{{background:transparent;border:none;border-bottom:1px solid {_muted_border()};border-radius:0px;}}")
         fh = QHBoxLayout(fhdr)
         fh.setContentsMargins(16, 0, 16, 0)
         fh.addWidget(_lbl("⚠  Key Findings & Alerts", 12, True, "#ffffff"))
@@ -615,15 +712,16 @@ class ResultsDashboardPage(QWidget):
         fc_vb.addWidget(fhdr)
 
         scroll = QScrollArea()
+        scroll.setObjectName("ResultsFindingsScroll")
         scroll.setWidgetResizable(True)
         scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         scroll.setMinimumHeight(0)
-        scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
+        scroll.setStyleSheet(_findings_scroll_qss())
         sw = QWidget()
-        sw.setStyleSheet("background:transparent;")
+        set_role(sw, "transparent")
         sw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         sw_vb = QVBoxLayout(sw)
-        sw_vb.setContentsMargins(12, 10, 12, 10)
+        sw_vb.setContentsMargins(12, 10, 12, 16)
         sw_vb.setSpacing(8)
 
         if findings:
@@ -642,13 +740,13 @@ class ResultsDashboardPage(QWidget):
             sw_vb.addStretch()
 
         scroll.setWidget(sw)
+        scroll.setMinimumHeight(130)
         fc_vb.addWidget(scroll, stretch=1)
 
         nav = QFrame()
-        nav.setStyleSheet(
-            "QFrame{background:transparent;border:none;"
-            "border-top:1px solid rgba(51,65,85,0.4);border-radius:0px;}"
-        )
+        nav.setObjectName("ResultsFindingsNav")
+        nav.setFixedHeight(56)
+        nav.setStyleSheet(f"QFrame{{background:transparent;border:none;border-top:1px solid {_muted_border()};border-radius:0px;}}")
         nav_row = QHBoxLayout(nav)
         nav_row.setContentsMargins(12, 6, 12, 6)
         nav_row.setSpacing(8)
@@ -693,10 +791,14 @@ class ResultsDashboardPage(QWidget):
         for fmt_name, icon_ch in [("JSON", "{}"), ("CSV", "⊞"), ("PDF", "📋")]:
             fb = QFrame()
             fb.setStyleSheet(
-                "QFrame{background:rgba(51,65,85,0.30);"
-                "border:1px solid rgba(51,65,85,0.5);border-radius:8px;}"
-                "QFrame:hover{background:rgba(6,182,212,0.08);"
-                "border:1px solid rgba(6,182,212,0.35);}"
+                "QFrame{"
+                f"background:{'#f8fbff' if _is_light() else 'rgba(51,65,85,0.30)'};"
+                f"border:1px solid {'#d6e4ff' if _is_light() else 'rgba(51,65,85,0.5)'};border-radius:8px;"
+                "}"
+                "QFrame:hover{"
+                f"background:{'#eef4ff' if _is_light() else 'rgba(6,182,212,0.08)'};"
+                f"border:1px solid {'#1a56db' if _is_light() else 'rgba(6,182,212,0.35)'};"
+                "}"
             )
             fb.setCursor(Qt.PointingHandCursor)
             fb_vb = QVBoxLayout(fb)
@@ -711,7 +813,7 @@ class ResultsDashboardPage(QWidget):
             fl = QLabel(fmt_name)
             fl.setFont(QFont("Segoe UI", 11, QFont.Bold))
             fl.setAlignment(Qt.AlignCenter)
-            fl.setStyleSheet("background:transparent;color:#ffffff;border:none;")
+            fl.setStyleSheet(f"background:transparent;color:{_map_color('#ffffff')};border:none;")
             fb_vb.addWidget(fl)
             fb.mousePressEvent = lambda e, f=fmt_name.lower(): self._quick_export(f)
             fmt_row.addWidget(fb)
@@ -725,7 +827,7 @@ class ResultsDashboardPage(QWidget):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _quick_export(self, fmt: str):
-        self._export_lbl.setStyleSheet("color:#06b6d4;background:transparent;border:none;")
+        set_tone(self._export_lbl, "#06b6d4")
         self._export_lbl.setText(f"Generating {fmt.upper()}…")
 
         try:
@@ -753,17 +855,13 @@ class ResultsDashboardPage(QWidget):
                     pass
 
             else:
-                self._export_lbl.setStyleSheet(
-                    "color:#f87171;background:transparent;border:none;"
-                )
+                set_tone(self._export_lbl, "#f87171")
                 self._export_lbl.setText(f"✗  {result['error']}")
                 toast = _ExportToast(self, result["error"], success=False)
                 toast.show_centered(self)
 
         except Exception as exc:
-            self._export_lbl.setStyleSheet(
-                "color:#f87171;background:transparent;border:none;"
-            )
+            set_tone(self._export_lbl, "#f87171")
             self._export_lbl.setText(f"✗  {exc}")
             toast = _ExportToast(self, str(exc), success=False)
             toast.show_centered(self)
@@ -815,6 +913,40 @@ class ResultsDashboardPage(QWidget):
         except Exception:
             # Audit logging must never interrupt report export or file opening.
             pass
+
+
+    def _style_context_bar(self) -> None:
+        """Refresh the context strip after live light/dark switching."""
+        try:
+            self._ctx_bar.setStyleSheet(_context_bar_qss())
+            self._ctx_icon.setStyleSheet(
+                "color:#06b6d4;background:transparent;border:none;font-size:13px;"
+            )
+            self._ctx_filename.setStyleSheet(
+                f"color:{_map_color('#e2e8f0')};background:transparent;border:none;"
+                "font-size:12px;font-weight:600;"
+            )
+            self._ctx_meta.setStyleSheet(
+                f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:11px;"
+            )
+        except Exception:
+            pass
+
+    def apply_theme(self, theme: str | None = None):
+        """Refresh Results widgets immediately after live theme switching."""
+        active = "light" if str(theme or current_theme()).strip().lower() == "light" else "dark"
+        self.setProperty("ramdetectTheme", active)
+        try:
+            for header in self.findChildren(HeaderBar):
+                header.apply_theme(active)
+        except Exception:
+            pass
+        self._style_context_bar()
+        try:
+            self._rebuild()
+        except Exception:
+            pass
+        refresh_style(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -875,11 +1007,17 @@ def _finding_widget(f: dict) -> QFrame:
     pill_bg = _PILL_BG.get(sev, "rgba(148,163,184,0.2)")
 
     item = QFrame()
-    item.setStyleSheet(
-        f"QFrame{{background:{bg};border-left:4px solid {bc};"
-        f"border-radius:6px;}}"
-    )
-    item.setSizePolicy(QSP.Expanding, QSP.Fixed)
+    if _is_light():
+        item_bg = bg if bg != "transparent" else "#ffffff"
+        if bg.startswith("rgba"):
+            item_bg = {"high": "#fff7f7", "medium": "#fffbeb", "low": "#f0f7ff"}.get(sev, "#ffffff")
+        item.setStyleSheet(f"QFrame{{background:{item_bg};border:1px solid #b9d2ff;border-left:4px solid {bc};border-radius:6px;}}")
+    else:
+        item.setStyleSheet(
+            f"QFrame{{background:{bg};border-left:4px solid {bc};"
+            f"border-radius:6px;}}"
+        )
+    item.setSizePolicy(QSP.Expanding, QSP.Minimum)
 
     outer = QVBoxLayout(item)
     outer.setContentsMargins(8, 5, 10, 5)
@@ -910,7 +1048,7 @@ def _finding_widget(f: dict) -> QFrame:
 
     cat = QLabel(f.get("category", ""))
     cat.setStyleSheet(
-        "color:#94a3b8;background:transparent;border:none;font-size:9px;"
+        f"color:{_map_color('#94a3b8')};background:transparent;border:none;font-size:9px;"
     )
     top.addWidget(cat)
     top.addStretch()
@@ -919,7 +1057,7 @@ def _finding_widget(f: dict) -> QFrame:
     desc = QLabel(f.get("description", ""))
     desc.setWordWrap(True)
     desc.setStyleSheet(
-        "color:#cbd5e1;background:transparent;border:none;font-size:10px;"
+        f"color:{_map_color('#cbd5e1')};background:transparent;border:none;font-size:10px;"
     )
     outer.addWidget(desc)
 

@@ -30,6 +30,8 @@ from typing import List, Optional, Sequence
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QToolTip
 from PyQt5.QtCore    import Qt, QPoint
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 try:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -41,7 +43,7 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dark theme defaults
+# Theme-aware Matplotlib defaults
 # ─────────────────────────────────────────────────────────────────────────────
 
 _BG          = "#0f172a"
@@ -55,8 +57,51 @@ _PALETTE_MAIN   = ["#06b6d4", "#34d399", "#f87171", "#facc15", "#a78bfa", "#fb92
 _PALETTE_STATUS = {"clean": "#34d399", "suspicious": "#f87171", "neutral": "#06b6d4"}
 
 
+def _refresh_chart_palette(theme: str | None = None):
+    """Refresh chart colours from the active RAMDetect UI theme."""
+    global _BG, _GRID, _TEXT, _TITLE_TEXT, _PALETTE_MAIN, _PALETTE_STATUS
+    light = (theme or current_theme() or "dark").lower() == "light"
+    if light:
+        _BG = "#f8fbff"
+        _GRID = "#d9e6ff"
+        _TEXT = "#5873a8"
+        _TITLE_TEXT = "#1e3a6e"
+        _PALETTE_MAIN = ["#1a56db", "#10b981", "#dc2626", "#d97706", "#7c3aed", "#f97316"]
+        _PALETTE_STATUS = {"clean": "#10b981", "suspicious": "#dc2626", "neutral": "#1a56db"}
+    else:
+        _BG = "#0f172a"
+        _GRID = "#1e293b"
+        _TEXT = "#94a3b8"
+        _TITLE_TEXT = "#cbd5e1"
+        _PALETTE_MAIN = ["#06b6d4", "#34d399", "#f87171", "#facc15", "#a78bfa", "#fb923c"]
+        _PALETTE_STATUS = {"clean": "#34d399", "suspicious": "#f87171", "neutral": "#06b6d4"}
+
+
+def _tooltip_qss() -> str:
+    if (current_theme() or "dark").lower() == "light":
+        return (
+            "QToolTip{"
+            "background-color:#ffffff;"
+            "color:#1e3a6e;"
+            "border:1px solid #9fb7e5;"
+            "border-radius:8px;"
+            "padding:8px 10px;"
+            "}"
+        )
+    return (
+        "QToolTip{"
+        "background-color:#1e293b;"
+        "color:#e2e8f0;"
+        "border:1px solid rgba(6,182,212,191);"
+        "border-radius:8px;"
+        "padding:8px 10px;"
+        "}"
+    )
+
+
 def _style_ax(ax, title: str = "", xlabel: str = "", ylabel: str = ""):
-    """Apply RAMDetect dark theme to a matplotlib Axes object."""
+    """Apply the active RAMDetect theme to a matplotlib Axes object."""
+    _refresh_chart_palette()
     ax.set_facecolor(_AX_BG)
     ax.tick_params(colors=_TEXT, labelsize=9)
     ax.xaxis.label.set_color(_TEXT)
@@ -84,16 +129,8 @@ class ChartWidget(QWidget):
                  parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet(
-            "background: transparent;"
-            "QToolTip{"
-            "background-color:#1e293b;"
-            "color:#e2e8f0;"
-            "border:1px solid rgba(6,182,212,0.75);"
-            "border-radius:8px;"
-            "padding:8px;"
-            "}"
-        )
+        _refresh_chart_palette()
+        self.setStyleSheet(_tooltip_qss())
 
         # Optional Matplotlib hover/highlight support.
         self._hover_cid = None
@@ -108,9 +145,10 @@ class ChartWidget(QWidget):
             self._fig    = Figure(figsize=figsize, dpi=dpi, facecolor="none")
             self._fig.patch.set_alpha(0.0)
             self._canvas = FigureCanvas(self._fig)
-            self._canvas.setStyleSheet("background: transparent;")
+            set_role(self._canvas, "transparent")
             self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self._canvas.setMouseTracking(True)
+            self._canvas.setStyleSheet(_tooltip_qss())
             vb.addWidget(self._canvas)
         else:
             from PyQt5.QtWidgets import QLabel
@@ -138,6 +176,10 @@ class ChartWidget(QWidget):
         self._hover_patches = []
         self._hover_last_index = None
 
+        _refresh_chart_palette()
+        self.setStyleSheet(_tooltip_qss())
+        if self._canvas is not None:
+            self._canvas.setStyleSheet(_tooltip_qss())
         self._fig.clear()
         ax = self._fig.add_subplot(111)
         self._fig.patch.set_alpha(0.0)
@@ -221,8 +263,7 @@ class ChartWidget(QWidget):
                 else:
                     safe_tip = f"<b>{label}</b><br><b>Importance:</b> {val:.4f}"
                 return (
-                    "<div style='white-space:normal; width:330px; "
-                    "color:#e2e8f0; background:transparent;'>"
+                    f"<div style='white-space:normal; width:330px; color:{_TITLE_TEXT}; background:transparent;'>"
                     f"{safe_tip}</div>"
                 )
 
@@ -281,7 +322,7 @@ class ChartWidget(QWidget):
                     if i == hit_idx:
                         patch.set_alpha(1.0)
                         patch.set_linewidth(1.2)
-                        patch.set_edgecolor("#67e8f9")
+                        patch.set_edgecolor("#1a56db" if (current_theme() or "dark").lower() == "light" else "#67e8f9")
                     else:
                         patch.set_alpha(0.32)
                         patch.set_linewidth(0.0)
@@ -320,7 +361,7 @@ class ChartWidget(QWidget):
             autopct=autopct,
             startangle=90,
             pctdistance=0.75,
-            wedgeprops={"linewidth": 2.5, "edgecolor": _BG, "width": 0.52},
+            wedgeprops={"linewidth": 0, "edgecolor": "none", "width": 0.52},
         )
         wedges = result[0]
         if show_pct and len(result) >= 3:

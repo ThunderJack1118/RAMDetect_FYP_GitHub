@@ -17,9 +17,11 @@ Signals
 
 import os
 import sys
+from ui.style_helpers import set_role, set_tone, set_variant, set_state
+from ui.theme import current_theme
 
 from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
-                              QLabel, QPushButton, QFrame)
+                              QLabel, QPushButton, QFrame, QApplication)
 from PyQt5.QtCore    import Qt, pyqtSignal, QPoint, QSize
 from PyQt5.QtGui     import (QFont, QLinearGradient, QColor,
                               QPainter, QPen, QBrush, QPolygon,
@@ -50,67 +52,109 @@ def _ui_resource_path(*parts: str) -> str:
 
 class LogoIcon(QLabel):
     """
-    Displays the official RAMDetect image logo from:
-        ramdetect/ui/resources/photo/ramdetect.png
+    Displays the RAMDetect logo in the header.
 
-    The source logo has a large black canvas around the white mark.  The widget
-    auto-crops the dark padding before scaling, so the mark appears large and
-    balanced in the header instead of looking like a tiny icon.
+    Dark theme uses the existing RAMDetect logo and keeps styling in
+    ramdetect/ui/resources/styles.qss.
     """
     def __init__(self, size: int = 54, parent=None):
         super().__init__(parent)
         self._size = size
+        self.setObjectName("ramdetectLogoIcon")
         self.setFixedSize(size, size)
         self.setAlignment(Qt.AlignCenter)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent; border: none;")
+        set_role(self, "transparent")
 
-        logo_path = _ui_resource_path("photo", "RAMDETECT-LOGO-CLEAN.png")
+        self.apply_theme(current_theme())
+
+    def apply_theme(self, theme: str = "dark") -> None:
+        # Phase 1: choose the best available logo asset for the selected theme.
+        # Light mode uses the blue/black logo when available; dark mode keeps
+        # the existing white/clean RAMDetect logo identity.
+        theme = (theme or current_theme() or "dark").strip().lower()
+        if theme == "light":
+            # Match AdminSidePanel ordering so the Dashboard header and admin
+            # panel use the same blue RAMDetect asset in light mode.
+            candidates = [
+                _ui_resource_path("photo", "RAMDETECT-LOGO_blue.png"),
+                _ui_resource_path("photo", "ramdetect_blue.jpg"),
+                _ui_resource_path("photo", "ramdetect_black.png"),
+                _ui_resource_path("photo", "RAMDETECT-LOGO-CLEAN.png"),
+                _ui_resource_path("photo", "ramdetect.png"),
+            ]
+        else:
+            candidates = [
+                _ui_resource_path("photo", "RAMDETECT-LOGO-CLEAN.png"),
+                _ui_resource_path("photo", "ramdetect.png"),
+                _ui_resource_path("photo", "ramdetect_black.png"),
+            ]
+
+        logo_path = next((path for path in candidates if os.path.exists(path)), candidates[0])
         pix = QPixmap(logo_path)
         if not pix.isNull():
-            pix = self._crop_dark_padding(pix)
+            pix = self._crop_padding_for_theme(pix, theme)
             scaled = pix.scaled(
-                size, size,
+                self._size, self._size,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
             self.setPixmap(scaled)
+            self.setText("")
             self.setToolTip(logo_path)
         else:
+            self.setPixmap(QPixmap())
             self.setText("🛡")
-            self.setFont(QFont("Segoe UI", max(18, size // 2)))
-            self.setStyleSheet("color: #06b6d4; background: transparent; border: none;")
+            self.setFont(QFont("Segoe UI", max(18, self._size // 2)))
+            set_tone(self, "#06b6d4")
             self.setToolTip(f"Logo not found: {logo_path}")
 
     @staticmethod
-    def _crop_dark_padding(pix: QPixmap) -> QPixmap:
-        """Crop near-black padding from ramdetect.png while keeping a small margin."""
+    def _crop_padding_for_theme(pix: QPixmap, theme: str) -> QPixmap:
+        """Crop flat logo padding without modifying source image files."""
         img = pix.toImage().convertToFormat(QImage.Format_ARGB32)
         w, h = img.width(), img.height()
-        min_x, min_y, max_x, max_y = w, h, -1, -1
+        if w <= 1 or h <= 1:
+            return pix
 
-        # Treat visible non-black pixels as logo content.  This works for the
-        # uploaded white-on-black mark and also for future coloured versions.
+        corners = [
+            img.pixelColor(0, 0), img.pixelColor(w - 1, 0),
+            img.pixelColor(0, h - 1), img.pixelColor(w - 1, h - 1),
+        ]
+        bg = sum((c.red() + c.green() + c.blue()) / 3 for c in corners) / len(corners)
+        dark_bg = bg < 128
+        remove_light_canvas = (str(theme or "").lower() == "light" and not dark_bg)
+
+        min_x, min_y, max_x, max_y = w, h, -1, -1
         for y in range(h):
             for x in range(w):
                 c = img.pixelColor(x, y)
-                if c.alpha() > 10 and max(c.red(), c.green(), c.blue()) > 28:
-                    if x < min_x: min_x = x
-                    if y < min_y: min_y = y
-                    if x > max_x: max_x = x
-                    if y > max_y: max_y = y
+                if c.alpha() <= 10:
+                    continue
+                bright = (c.red() + c.green() + c.blue()) / 3
+
+                if remove_light_canvas and c.red() >= 238 and c.green() >= 238 and c.blue() >= 238:
+                    c.setAlpha(0)
+                    img.setPixelColor(x, y, c)
+                    continue
+
+                is_content = bright > 35 if dark_bg else bright < 235
+                if is_content:
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
 
         if max_x < min_x or max_y < min_y:
-            return pix
+            return QPixmap.fromImage(img)
 
         content_w = max_x - min_x + 1
         content_h = max_y - min_y + 1
-        pad = max(6, int(max(content_w, content_h) * 0.08))
+        pad = max(4, int(max(content_w, content_h) * 0.06))
         min_x = max(0, min_x - pad)
         min_y = max(0, min_y - pad)
         max_x = min(w - 1, max_x + pad)
         max_y = min(h - 1, max_y + pad)
-
         return QPixmap.fromImage(img.copy(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 
 
@@ -127,53 +171,13 @@ class ShieldIcon(QWidget):
         super().__init__(parent)
         self.setFixedSize(40, 40)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent;")
+        set_role(self, "transparent")
 
     def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        # ── Outer shield body ─────────────────────────────────────────────────
-        body_grad = QLinearGradient(0, 0, 40, 40)
-        body_grad.setColorAt(0.0, QColor("#06b6d4"))   # cyan
-        body_grad.setColorAt(0.6, QColor("#2563eb"))   # blue
-        body_grad.setColorAt(1.0, QColor("#1e3a8a"))   # deep blue
-
-        p.setBrush(QBrush(body_grad))
-        p.setPen(Qt.NoPen)
-
-        # Rounded-top shield: top-arch + tapered sides + bottom-point
-        # Points: top-left-shoulder, top-right-shoulder, right-side,
-        #         bottom-point, left-side
-        shield = QPolygon([
-            QPoint( 4,  8),   # top-left
-            QPoint(36,  8),   # top-right
-            QPoint(36, 22),   # right-mid
-            QPoint(20, 38),   # bottom tip
-            QPoint( 4, 22),   # left-mid
-        ])
-        p.drawPolygon(shield)
-
-        # ── Top rounded cap ───────────────────────────────────────────────────
-        cap_grad = QLinearGradient(4, 3, 36, 12)
-        cap_grad.setColorAt(0.0, QColor("#22d3ee"))
-        cap_grad.setColorAt(1.0, QColor("#0e7490"))
-        p.setBrush(QBrush(cap_grad))
-        p.drawEllipse(4, 3, 32, 14)
-
-        # ── Inner highlight (semi-transparent white arc at top) ────────────────
-        p.setBrush(Qt.NoBrush)
-        glow = QPen(QColor(255, 255, 255, 60), 1.5)
-        p.setPen(glow)
-        p.drawArc(9, 6, 22, 10, 0, 180 * 16)
-
-        # ── Tiny shield check-mark ────────────────────────────────────────────
-        tick = QPen(QColor(255, 255, 255, 200), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-        p.setPen(tick)
-        p.drawLine(QPoint(14, 20), QPoint(18, 25))
-        p.drawLine(QPoint(18, 25), QPoint(26, 15))
-
-        p.end()
+        # Legacy fallback widget kept for compatibility. The main header uses
+        # image assets, so avoid custom QPainter drawing here to prevent
+        # paintEngine warnings on some PyQt/Windows builds.
+        return
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,13 +216,18 @@ class HeaderBar(QWidget):
                  parent=None):
         super().__init__(parent)
         self._offline_mode = bool(offline_mode)
+        self.setObjectName("ramdetectHeaderBar")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.logo_icon = None
+        self.title_label = None
+        self.subtitle_label = None
+        self.version_badge = None
+        self.offline_badge = None
+        self.results_button = None
+        self.settings_button = None
+        self.dashboard_button = None
+        self.action_button = None
         self.setFixedHeight(72)
-        self.setStyleSheet(
-            "HeaderBar {"
-            "  background: rgba(10,17,34,0.92);"
-            "  border-bottom: 1px solid rgba(6,182,212,0.18);"
-            "}"
-        )
 
         row = QHBoxLayout(self)
         row.setContentsMargins(40, 0, 40, 0)
@@ -226,23 +235,26 @@ class HeaderBar(QWidget):
         row.setAlignment(Qt.AlignVCenter)
 
         # ── Branding ──────────────────────────────────────────────────────────
-        row.addWidget(LogoIcon(54), alignment=Qt.AlignVCenter)
+        self.logo_icon = LogoIcon(54)
+        row.addWidget(self.logo_icon, alignment=Qt.AlignVCenter)
 
         brand = QVBoxLayout()
         brand.setSpacing(1)
         brand.setAlignment(Qt.AlignVCenter)
 
         title = QLabel("RAMDetect")
+        self.title_label = title
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #ffffff; background: transparent; letter-spacing: 0.5px;")
+        title.setObjectName("HeaderTitle")
 
         subtitle_text = "Offline Local Mode" if self._offline_mode else "Memory Forensics Analysis Platform"
-        subtitle_color = "#f59e0b" if self._offline_mode else "#64748b"
         subtitle_weight = QFont.DemiBold if self._offline_mode else QFont.Normal
 
         sub = QLabel(subtitle_text)
+        self.subtitle_label = sub
+        sub.setObjectName("HeaderSubtitle")
         sub.setFont(QFont("Segoe UI", 10, subtitle_weight))
-        sub.setStyleSheet(f"color: {subtitle_color}; background: transparent;")
+        set_state(sub, "offline" if self._offline_mode else "online")
         if self._offline_mode:
             sub.setToolTip(
                 "RAMDetect is running without the PostgreSQL/PTM server. "
@@ -256,27 +268,17 @@ class HeaderBar(QWidget):
         # ── Version pill ──────────────────────────────────────────────────────
         if show_version:
             ver = QLabel(_VERSION)
+            self.version_badge = ver
             ver.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            ver.setStyleSheet(
-                "color: #06b6d4;"
-                "background: rgba(6,182,212,0.10);"
-                "border: 1px solid rgba(6,182,212,0.25);"
-                "border-radius: 8px;"
-                "padding: 1px 7px;"
-            )
+            ver.setObjectName("VersionBadge")
             ver.setAlignment(Qt.AlignVCenter)
             row.addWidget(ver, alignment=Qt.AlignVCenter)
 
         if self._offline_mode:
             offline_badge = QLabel("OFFLINE MODE")
+            self.offline_badge = offline_badge
             offline_badge.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            offline_badge.setStyleSheet(
-                "color: #f8fafc;"
-                "background: rgba(245,158,11,0.18);"
-                "border: 1px solid rgba(245,158,11,0.45);"
-                "border-radius: 8px;"
-                "padding: 2px 10px;"
-            )
+            offline_badge.setObjectName("OfflineBadge")
             offline_badge.setAlignment(Qt.AlignVCenter)
             offline_badge.setToolTip(
                 "Login was bypassed because the server is unavailable. "
@@ -290,21 +292,17 @@ class HeaderBar(QWidget):
         # ← Results back-button (shown on branch pages that lead from Results)
         if show_results:
             res_btn = QPushButton("← Results")
+            self.results_button = res_btn
             res_btn.setObjectName("iconBtn")
             res_btn.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
             res_btn.setFixedHeight(38)
-            res_btn.setStyleSheet(
-                "QPushButton { background: rgba(6,182,212,0.12);"
-                "  border: 1px solid rgba(6,182,212,0.35); border-radius: 8px;"
-                "  color: #06b6d4; padding: 0 14px; }"
-                "QPushButton:hover { background: rgba(6,182,212,0.22);"
-                "  border-color: rgba(6,182,212,0.6); color: #22d3ee; }"
-            )
+            set_variant(res_btn, "navActive")
             res_btn.clicked.connect(self.results_clicked)
             row.addWidget(res_btn, alignment=Qt.AlignVCenter)
 
         # Settings button
         gear = QPushButton()
+        self.settings_button = gear
         gear.setObjectName("iconBtn")
         gear.setFixedSize(38, 38)
         gear.setToolTip("Settings")
@@ -315,29 +313,18 @@ class HeaderBar(QWidget):
         else:
             gear.setText("⚙")
             gear.setFont(QFont("Segoe UI", 15))
-        gear.setStyleSheet(
-            "QPushButton { background: rgba(51,65,85,0.35);"
-            "  border: 1px solid rgba(51,65,85,0.5); border-radius: 8px;"
-            "  color: #ffffff; padding: 0px; }"
-            "QPushButton:hover { background: rgba(6,182,212,0.12);"
-            "  border-color: rgba(6,182,212,0.35); }"
-        )
+        set_variant(gear, "iconHeader")
         gear.clicked.connect(self.settings_clicked)
         row.addWidget(gear, alignment=Qt.AlignVCenter)
 
         # Primary / dashboard button
         if show_dashboard:
             back = QPushButton(" Dashboard")
+            self.dashboard_button = back
             back.setObjectName("iconBtn")
             back.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
             back.setFixedHeight(38)
-            back.setStyleSheet(
-                "QPushButton { background: rgba(51,65,85,0.35);"
-                "  border: 1px solid rgba(51,65,85,0.5); border-radius: 8px;"
-                "  color: #94a3b8; padding: 0 14px; }"
-                "QPushButton:hover { background: rgba(6,182,212,0.12); color: #06b6d4;"
-                "  border-color: rgba(6,182,212,0.35); }"
-            )
+            set_variant(back, "nav")
             home_svg = _ui_resource_path("photo", "home_24dp_E3E3E3_FILL1_wght700_GRAD200_opsz48.svg")
             if os.path.exists(home_svg):
                 back.setIcon(QIcon(home_svg))
@@ -346,23 +333,72 @@ class HeaderBar(QWidget):
             row.addWidget(back, alignment=Qt.AlignVCenter)
         elif show_action:
             act = QPushButton(action_label)
+            self.action_button = act
             act.setObjectName("primaryBtn")
             act.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
             act.setFixedSize(108, 38)
-            act.setStyleSheet(
-                "QPushButton {"
-                "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                "    stop:0 #06b6d4, stop:1 #2563eb);"
-                "  color: white;"
-                "  border: none;"
-                "  border-radius: 8px;"
-                "  font-size: 13px;"
-                "  font-weight: 600;"
-                "}"
-                "QPushButton:hover {"
-                "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                "    stop:0 #0891b2, stop:1 #1d4ed8);"
-                "}"
-            )
+            set_variant(act, "primary")
             act.clicked.connect(self.action_clicked)
             row.addWidget(act, alignment=Qt.AlignVCenter)
+
+    # ── Theme compatibility hook ─────────────────────────────────────────────
+
+    def apply_theme(self, theme: str = "dark") -> None:
+        """Re-apply header object names/properties after a theme change."""
+        theme = (theme or current_theme() or "dark").strip().lower()
+        self.setProperty("ramdetectTheme", theme)
+        if theme == "light":
+            self.setStyleSheet("""
+                QWidget#ramdetectHeaderBar {
+                    background: #f0f5ff;
+                    border: none;
+                }
+                QLabel#HeaderTitle { color: #1e3a6e; background: transparent; border: none; }
+                QLabel#HeaderSubtitle { color: #5d76a9; background: transparent; border: none; }
+                QLabel#HeaderSubtitle[state="offline"] { color: #b7791f; }
+                QLabel#VersionBadge {
+                    color: #1a56db; background: #eef4ff; border: 1px solid #c8d8f5;
+                    border-radius: 8px; padding: 1px 8px;
+                }
+                QLabel#OfflineBadge {
+                    color: #b7791f; background: #fff7df; border: 1px solid #f8d37a;
+                    border-radius: 8px; padding: 2px 10px;
+                }
+                QLabel#ramdetectLogoIcon { background: transparent; border: none; }
+                QPushButton#iconBtn, QPushButton#primaryBtn {
+                    background: #1a56db; color: #ffffff; border: 1px solid #1a56db;
+                    border-radius: 9px; font-weight: 800;
+                }
+                QPushButton#iconBtn:hover, QPushButton#primaryBtn:hover {
+                    background: #174bbf; border-color: #174bbf; color: #ffffff;
+                }
+                QPushButton#iconBtn:disabled, QPushButton#primaryBtn:disabled,
+                QPushButton#iconBtn[variant="nav"]:disabled, QPushButton#iconBtn[variant="iconHeader"]:disabled {
+                    background: #f8fbff;
+                    color: #9aa8c3;
+                    border: 1px solid #d9e6ff;
+                }
+            """)
+        else:
+            self.setStyleSheet("")
+        if self.logo_icon is not None and hasattr(self.logo_icon, "apply_theme"):
+            self.logo_icon.apply_theme(theme)
+        if self.title_label is not None:
+            self.title_label.setObjectName("HeaderTitle")
+        if self.subtitle_label is not None:
+            self.subtitle_label.setObjectName("HeaderSubtitle")
+            set_state(self.subtitle_label, "offline" if self._offline_mode else "online")
+        if self.version_badge is not None:
+            self.version_badge.setObjectName("VersionBadge")
+        if self.offline_badge is not None:
+            self.offline_badge.setObjectName("OfflineBadge")
+        set_variant(self.settings_button, "iconHeader")
+        set_variant(self.dashboard_button, "nav")
+        set_variant(self.results_button, "navActive")
+        set_variant(self.action_button, "primary")
+        try:
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
+        except Exception:
+            pass

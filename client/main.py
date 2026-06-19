@@ -398,7 +398,14 @@ def _launch_gui(log: logging.Logger) -> int:
         app.setWindowIcon(QIcon(str(icon_path)))
 
 
-    _apply_dark_palette(app)
+    # Apply the saved UI theme before constructing the main window.  This is
+    # presentation-only and does not affect RAM acquisition, ML classification,
+    # database, report generation, repository sync, dump paths, or offline mode.
+    try:
+        from ui.theme import apply_theme as apply_ui_theme
+        apply_ui_theme(app)
+    except Exception:
+        _apply_dark_palette(app)
 
     # Runtime connectivity detection for Offline Local Mode. If PostgreSQL is
     # unreachable, RAMDetect bypasses central login and opens the Analyst-level

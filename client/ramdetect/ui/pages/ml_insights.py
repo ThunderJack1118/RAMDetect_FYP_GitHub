@@ -22,17 +22,87 @@ from ui.pages.base_page   import BasePage
 from ui.bridge.session    import AppState
 from ui.bridge.ml_bridge  import MLBridge          # ← get_model_metadata() lives here
 from ui.widgets.chart_widget import ChartWidget
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 _BG     = '#0f172a'
 _BORDER = '#334155'
 _CYAN   = '#06b6d4'
 _GREEN  = '#34d399'
 _RED    = '#f87171'
+_RED_DIM = 'rgba(248,113,113,38)'
 _YELLOW = '#facc15'
 _PURPLE = '#a855f7'
 _PINK   = '#ec4899'
 _TEXT   = '#e2e8f0'
 _MUTED  = '#94a3b8'
+_CARD_BG = 'rgba(30,41,59,102)'
+_PANEL_BG = 'rgba(30,41,59,166)'
+_SOFT_BG = 'rgba(148,163,184,26)'
+
+
+def _refresh_palette(theme: str | None = None) -> None:
+    """Update ML Insights presentation colours only."""
+    global _BG, _BORDER, _CYAN, _GREEN, _RED, _RED_DIM, _YELLOW, _PURPLE, _PINK, _TEXT, _MUTED
+    global _CARD_BG, _PANEL_BG, _SOFT_BG
+    light = (theme or current_theme() or 'dark').lower() == 'light'
+    if light:
+        _BG = '#f0f5ff'
+        _BORDER = '#d9e6ff'
+        _CYAN = '#1a56db'
+        _GREEN = '#10b981'
+        _RED = '#dc2626'
+        _RED_DIM = '#fff1f2'
+        _YELLOW = '#d97706'
+        _PURPLE = '#7c3aed'
+        _PINK = '#db2777'
+        _TEXT = '#1e3a6e'
+        _MUTED = '#6b82b4'
+        _CARD_BG = '#ffffff'
+        _PANEL_BG = '#f8fbff'
+        _SOFT_BG = '#eef4ff'
+    else:
+        _BG = '#0f172a'
+        _BORDER = '#334155'
+        _CYAN = '#06b6d4'
+        _GREEN = '#34d399'
+        _RED = '#f87171'
+        _RED_DIM = 'rgba(248,113,113,38)'
+        _YELLOW = '#facc15'
+        _PURPLE = '#a855f7'
+        _PINK = '#ec4899'
+        _TEXT = '#e2e8f0'
+        _MUTED = '#94a3b8'
+        _CARD_BG = 'rgba(30,41,59,102)'
+        _PANEL_BG = 'rgba(30,41,59,166)'
+        _SOFT_BG = 'rgba(148,163,184,26)'
+
+
+def _map_color(color: str) -> str:
+    """Map old dark inline colours to readable light-theme colours."""
+    if (current_theme() or 'dark').lower() != 'light':
+        return color
+    return {
+        '#ffffff': '#1e3a6e',
+        '#f8fafc': '#1e3a6e',
+        '#f1f5f9': '#1e3a6e',
+        '#e2e8f0': '#1e3a6e',
+        '#cbd5e1': '#385f9f',
+        '#94a3b8': '#6b82b4',
+        '#64748b': '#7b8fb8',
+        '#475569': '#9aa8c3',
+        '#334155': '#5873a8',
+        '#06b6d4': '#1a56db',
+        '#22d3ee': '#1a56db',
+        '#67e8f9': '#1a56db',
+        '#34d399': '#10b981',
+        '#22c55e': '#10b981',
+        '#f87171': '#dc2626',
+        '#ef4444': '#dc2626',
+        '#facc15': '#d97706',
+        '#a855f7': '#7c3aed',
+        '#ec4899': '#db2777',
+    }.get(str(color).lower(), color)
 
 # Last-resort defaults — only used if BOTH JSON files are missing
 _MOCK = dict(
@@ -226,6 +296,7 @@ def _feature_tooltip(raw: str, importance: float) -> str:
 def _L(text, size=12, color=_TEXT, bold=False) -> QLabel:
     w = QLabel(str(text))
     w.setTextFormat(Qt.PlainText)
+    color = _map_color(color)
     w.setStyleSheet(
         f"color:{color};font-size:{size}px;"
         f"font-weight:{'700' if bold else '400'};"
@@ -239,7 +310,7 @@ def _card(min_h=0, fixed_h=0) -> QFrame:
     f.setFrameShadow(QFrame.Plain)
     f.setStyleSheet(
         "QFrame{"
-        "background-color:rgba(30,41,59,0.40);"
+        f"background-color:{_CARD_BG};"
         f"border:1px solid {_BORDER};"
         "border-radius:12px;}")
     if fixed_h:
@@ -252,7 +323,7 @@ def _hline() -> QFrame:
     sep = QFrame()
     sep.setFrameShape(QFrame.HLine)
     sep.setFixedHeight(1)
-    sep.setStyleSheet("background-color:#334155;border:none;border-radius:0px;")
+    sep.setStyleSheet(f"background-color:{_BORDER};border:none;border-radius:0px;")
     return sep
 
 
@@ -260,7 +331,7 @@ def _vline() -> QFrame:
     sep = QFrame()
     sep.setFrameShape(QFrame.VLine)
     sep.setFixedWidth(1)
-    sep.setStyleSheet("background-color:rgba(51,65,85,0.85);border:none;border-radius:0px;")
+    sep.setStyleSheet(f"background-color:{_BORDER};border:none;border-radius:0px;")
     return sep
 
 
@@ -269,6 +340,7 @@ def _title_row(icon, icon_color, text) -> QHBoxLayout:
     row.setSpacing(7)
     row.setContentsMargins(0, 0, 0, 0)
     ico = QLabel(icon)
+    icon_color = _map_color(icon_color)
     ico.setStyleSheet(
         f"color:{icon_color};font-size:14px;"
         "background-color:transparent;border:none;")
@@ -282,6 +354,7 @@ class MLInsightsPage(BasePage):
     PAGE_TITLE = "ML Insights"
 
     def __init__(self, main_window):
+        _refresh_palette(current_theme())
         super().__init__(main_window, show_results=True)
         self._build_body()
 
@@ -289,7 +362,7 @@ class MLInsightsPage(BasePage):
         outer = QVBoxLayout(self.body)
         # Keep the old 2×2 ML Insights layout, but avoid vertical compression
         # on 900p screens by using compact margins and balanced row heights.
-        outer.setContentsMargins(24, 10, 24, 12)
+        outer.setContentsMargins(40, 10, 40, 12)
         outer.setSpacing(0)
 
         self._grid = QGridLayout()
@@ -375,6 +448,13 @@ class MLInsightsPage(BasePage):
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
 
+        ico = QLabel("◷")
+        ico.setStyleSheet(
+            f"color:{_CYAN};font-size:14px;"
+            "background-color:transparent;border:none;"
+        )
+        header.addWidget(ico)
+
         title = _L("Insight View", 12, _TEXT, bold=True)
         title.setToolTip("Switch between post-incident finding timeline and fused RF feature importance.")
         header.addWidget(title)
@@ -391,20 +471,31 @@ class MLInsightsPage(BasePage):
         )
         tab_buttons = [btn_timeline, btn_features]
 
-        base_btn_qss = (
-            "QPushButton{background:rgba(30,41,59,0.65);"
-            "border:1px solid rgba(148,163,184,0.20);"
-            "border-radius:8px;color:#94a3b8;"
-            "padding:5px 12px;font-size:12px;font-weight:700;}"
-            "QPushButton:hover{background:rgba(6,182,212,0.12);color:#e2e8f0;}"
-        )
-        active_btn_qss = (
-            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #06b6d4,stop:1 #2563eb);"
-            "border:1px solid rgba(6,182,212,0.75);"
-            "border-radius:8px;color:white;"
-            "padding:5px 12px;font-size:12px;font-weight:800;}"
-        )
+        if (current_theme() or 'dark').lower() == 'light':
+            base_btn_qss = (
+                "QPushButton{background:#f8fbff;border:1px solid #c8d8f5;"
+                "border-radius:8px;color:#5873a8;padding:5px 12px;font-size:12px;font-weight:700;}"
+                "QPushButton:hover{background:#eef4ff;color:#1a56db;border-color:#1a56db;}"
+            )
+            active_btn_qss = (
+                "QPushButton{background:#1a56db;border:1px solid #1a56db;"
+                "border-radius:8px;color:white;padding:5px 12px;font-size:12px;font-weight:800;}"
+            )
+        else:
+            base_btn_qss = (
+                "QPushButton{background:rgba(30,41,59,166);"
+                "border:1px solid rgba(148,163,184,51);"
+                "border-radius:8px;color:#94a3b8;"
+                "padding:5px 12px;font-size:12px;font-weight:700;}"
+                "QPushButton:hover{background:rgba(6,182,212,31);color:#e2e8f0;}"
+            )
+            active_btn_qss = (
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                "stop:0 #06b6d4,stop:1 #2563eb);"
+                "border:1px solid rgba(6,182,212,191);"
+                "border-radius:8px;color:white;"
+                "padding:5px 12px;font-size:12px;font-weight:800;}"
+            )
 
         for b in tab_buttons:
             b.setCursor(Qt.PointingHandCursor)
@@ -434,7 +525,7 @@ class MLInsightsPage(BasePage):
 
     def _tab_timeline_content(self, sess) -> QWidget:
         page = QWidget()
-        page.setStyleSheet("background:transparent;border:none;")
+        set_role(page, "transparent")
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
@@ -474,7 +565,7 @@ class MLInsightsPage(BasePage):
 
     def _tab_feature_importance_content(self, ml: dict) -> QWidget:
         page = QWidget()
-        page.setStyleSheet("background:transparent;border:none;")
+        set_role(page, "transparent")
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
@@ -613,7 +704,7 @@ class MLInsightsPage(BasePage):
             nl = QLabel(name)
             nl.setToolTip(tip)
             nl.setStyleSheet(
-                f"color:{_CYAN if is_final else '#cbd5e1'};font-size:12px;"
+                f"color:{_CYAN if is_final else _map_color('#cbd5e1')};font-size:12px;"
                 f"font-weight:{'700' if is_final else '400'};"
                 "background-color:transparent;border:none;padding:0;margin:0;")
             lrow.addWidget(nl)
@@ -633,7 +724,7 @@ class MLInsightsPage(BasePage):
             bar.setTextVisible(False)
             bar.setFixedHeight(10)
             bar.setStyleSheet(
-                "QProgressBar{background-color:#334155;border-radius:3px;border:none;}"
+                f"QProgressBar{{background-color:{'#dbeafe' if (current_theme() or 'dark').lower() == 'light' else '#334155'};border-radius:3px;border:none;}}"
                 f"QProgressBar::chunk{{"
                 f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                 f"stop:0 {c1},stop:1 {c2});"
@@ -664,7 +755,7 @@ class MLInsightsPage(BasePage):
             "This is fused into RF and is not a separate verdict threshold."
         )
         mse_lbl.setStyleSheet(
-            "color:#cbd5e1;font-size:12px;font-weight:500;"
+            f"color:{_map_color('#cbd5e1')};font-size:12px;font-weight:500;"
             "background:transparent;border:none;padding:0;margin:0;"
         )
         mse_row.addWidget(mse_lbl)
@@ -674,7 +765,7 @@ class MLInsightsPage(BasePage):
         mse_val.setToolTip("Raw Autoencoder reconstruction MSE used as the fusion feature.")
         mse_val.setStyleSheet(
             f"color:{_TEXT};font-size:13px;font-weight:800;"
-            "background:rgba(148,163,184,0.10);border:1px solid rgba(148,163,184,0.18);"
+            f"background:{_SOFT_BG};border:1px solid {_BORDER};"
             "border-radius:6px;padding:3px 10px;margin:0;"
         )
         mse_row.addWidget(mse_val)
@@ -749,6 +840,12 @@ class MLInsightsPage(BasePage):
 
     def _show_feature_info_dialog(self):
         """Small themed popup explaining current RAMDetect ML feature design."""
+        _refresh_palette(current_theme())
+        light = (current_theme() or 'dark').lower() == 'light'
+        card_bg = '#ffffff' if light else '#0f172a'
+        card_border = _BORDER if light else 'rgba(6,182,212,102)'
+        button_hover_bg = _RED_DIM if light else 'rgba(239,68,68,46)'
+
         dlg = QDialog(self)
         dlg.setModal(True)
         dlg.setWindowTitle("RAMDetect ML Feature Information")
@@ -762,72 +859,53 @@ class MLInsightsPage(BasePage):
         card = QFrame()
         card.setObjectName("mlFeatureInfoCard")
         card.setStyleSheet(
-            "QFrame#mlFeatureInfoCard {"
-            " background: #0f172a;"
-            " border: 1px solid rgba(6,182,212,0.40);"
-            " border-radius: 14px;"
-            "}"
+            f"QFrame#mlFeatureInfoCard {{ background:{card_bg}; border:1px solid {card_border}; border-radius:14px; }}"
             "QLabel { background: transparent; border: none; }"
         )
         outer.addWidget(card)
 
         root = QVBoxLayout(card)
-        root.setContentsMargins(26, 20, 26, 22)
+        root.setContentsMargins(30, 20, 30, 20)
         root.setSpacing(10)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 6, 0)
         title = QLabel("RAMDetect ML / Feature Information")
-        title.setStyleSheet("color:#ffffff;font-size:16px;font-weight:700;background:transparent;border:none;")
+        title.setStyleSheet(f"color:{_TEXT};font-size:16px;font-weight:700;background:transparent;border:none;")
         header.addWidget(title, 1)
 
         close_btn = QPushButton("×")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setFixedSize(34, 34)
         close_btn.setStyleSheet(
-            "QPushButton{background:transparent;color:#cbd5e1;border:none;"
-            "border-radius:17px;font-size:21px;font-weight:700;}"
-            "QPushButton:hover{background:rgba(239,68,68,0.18);color:white;}"
+            f"QPushButton{{background:transparent;color:{_MUTED};border:0px solid transparent;"
+            "border-radius:17px;font-size:21px;font-weight:700;padding:0px;}}"
+            f"QPushButton:hover{{background:{button_hover_bg};color:{_RED};}}"
         )
         close_btn.clicked.connect(dlg.accept)
         header.addWidget(close_btn)
         root.addLayout(header)
 
-        desc = QLabel(
-            "Architecture reference for documentation only; it does not change runtime verdict logic."
-        )
+        desc = QLabel("Architecture reference for documentation only; it does not change runtime verdict logic.")
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color:{_MUTED};font-size:11px;background:transparent;border:none;")
         root.addWidget(desc)
 
-        items = [
-            ("Application Mode", "Post-incident RAM forensics using DumpIt."),
-            ("Decision Logic", "ML-only RF; no veto, clean dampener, or override rules."),
-            ("Threshold", "RF decision threshold fixed at 0.5."),
-            ("Fusion Schema", _FUSED_INPUT_TEXT),
-            ("ML Decision Feature Support", "28/55"),
-            ("CIC Semantic Export Coverage", "36/55 (65.45%)"),
-            ("CIC CSV Schema Compatibility", "100.00%"),
-            ("Autoencoder Role", "AE MSE is a fused RF input, not a separate verdict."),
-            ("Dataset", _DATASET_NAME),
-        ]
+        items = [("Application Mode", "Post-incident RAM forensics using DumpIt."), ("Decision Logic", "ML-only RF; no veto, clean dampener, or override rules."), ("Threshold", "RF decision threshold fixed at 0.5."), ("Fusion Schema", _FUSED_INPUT_TEXT), ("ML Decision Feature Support", "28/55"), ("CIC Semantic Export Coverage", "36/55 (65.45%)"), ("CIC CSV Schema Compatibility", "100.00%"), ("Autoencoder Role", "AE MSE is a fused RF input, not a separate verdict."), ("Dataset", _DATASET_NAME)]
 
         body = QGridLayout()
         body.setHorizontalSpacing(16)
         body.setVerticalSpacing(7)
         body.setContentsMargins(0, 2, 0, 0)
-
         for row, (k, val) in enumerate(items):
             k_lbl = QLabel(k)
             k_lbl.setStyleSheet(f"color:{_CYAN};font-size:11px;font-weight:700;background:transparent;border:none;")
             k_lbl.setMinimumWidth(205)
             body.addWidget(k_lbl, row, 0, Qt.AlignTop)
-
             v_lbl = QLabel(val)
             v_lbl.setWordWrap(True)
             v_lbl.setStyleSheet(f"color:{_TEXT};font-size:11px;font-weight:500;background:transparent;border:none;")
             body.addWidget(v_lbl, row, 1)
-
         body.setColumnStretch(0, 0)
         body.setColumnStretch(1, 1)
         root.addLayout(body, 1)
@@ -835,13 +913,7 @@ class MLInsightsPage(BasePage):
         ok = QPushButton("Close")
         ok.setCursor(Qt.PointingHandCursor)
         ok.setFixedHeight(34)
-        ok.setStyleSheet(
-            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #06b6d4,stop:1 #2563eb);color:white;border:none;"
-            "border-radius:9px;font-size:12px;font-weight:700;}"
-            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #22d3ee,stop:1 #3b82f6);}"
-        )
+        ok.setStyleSheet("QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #06b6d4,stop:1 #2563eb);color:white;border:0px solid transparent;border-radius:9px;font-size:12px;font-weight:700;}QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #22d3ee,stop:1 #3b82f6);}")
         ok.clicked.connect(dlg.accept)
         root.addWidget(ok)
 
@@ -850,7 +922,6 @@ class MLInsightsPage(BasePage):
             dlg.move(parent_geo.center() - dlg.rect().center())
         except Exception:
             pass
-
         dlg.exec_()
 
     # ── Panel 4: Performance Metrics ──────────────────────────────────────────
@@ -876,9 +947,9 @@ class MLInsightsPage(BasePage):
         ]
 
         STATUS = {
-            'excellent': (_GREEN,  'rgba(52,211,153,0.18)'),
-            'good':      (_CYAN,   'rgba(6,182,212,0.18)'),
-            'fair':      (_YELLOW, 'rgba(250,204,21,0.18)'),
+            'excellent': (_GREEN,  'rgba(52,211,153,46)'),
+            'good':      (_CYAN,   'rgba(6,182,212,46)'),
+            'fair':      (_YELLOW, 'rgba(250,204,21,46)'),
         }
 
         # One real table container. The previous version stacked rounded mini-cards
@@ -887,12 +958,10 @@ class MLInsightsPage(BasePage):
         matrix.setObjectName("metricMatrix")
         matrix.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         matrix.setFixedHeight(150)
+        matrix_bg = '#f8fbff' if (current_theme() or 'dark').lower() == 'light' else 'rgba(51,65,85,46)'
+        matrix_brd = '#d9e6ff' if (current_theme() or 'dark').lower() == 'light' else 'rgba(148,163,184,51)'
         matrix.setStyleSheet(
-            "QFrame#metricMatrix{"
-            "background-color:rgba(51,65,85,0.18);"
-            "border:1px solid rgba(148,163,184,0.20);"
-            "border-radius:10px;"
-            "}"
+            f"QFrame#metricMatrix{{background-color:{matrix_bg};border:1px solid {matrix_brd};border-radius:10px;}}"
             "QLabel{background:transparent;border:none;}"
         )
 
@@ -916,8 +985,9 @@ class MLInsightsPage(BasePage):
 
             # Draw only the required separator sides. This keeps a clean single-box
             # matrix with no doubled borders, rounded-card collisions, or row offsets.
-            border_right = "border-right:1px solid rgba(148,163,184,0.16);" if ci == 0 else ""
-            border_bottom = "border-bottom:1px solid rgba(148,163,184,0.16);" if ri < 2 else ""
+            sep = '#d9e6ff' if (current_theme() or 'dark').lower() == 'light' else 'rgba(148,163,184,41)'
+            border_right = f"border-right:1px solid {sep};" if ci == 0 else ""
+            border_bottom = f"border-bottom:1px solid {sep};" if ri < 2 else ""
             cell.setStyleSheet(
                 "QFrame#metricCell{"
                 "background:transparent;"
@@ -1027,11 +1097,11 @@ class MLInsightsPage(BasePage):
         info_btn.setFixedHeight(26)
         info_btn.setToolTip("Show RAMDetect ML architecture and feature support details.")
         info_btn.setStyleSheet(
-            "QPushButton{background:rgba(6,182,212,0.10);"
-            "border:1px solid rgba(6,182,212,0.35);border-radius:7px;"
-            "color:#67e8f9;padding:0 10px;font-size:10px;font-weight:700;}"
-            "QPushButton:hover{background:rgba(6,182,212,0.18);color:#ffffff;}"
-            "QPushButton:pressed{background:rgba(8,145,178,0.24);}"
+            "QPushButton{background:rgba(6,182,212,26);"
+            "border:1px solid rgba(6,182,212,89);border-radius:7px;"
+            "color:#67e8f9;padding-top:0px;padding-bottom:0px;padding-left:10px;padding-right:10px;font-size:10px;font-weight:700;}"
+            "QPushButton:hover{background:rgba(6,182,212,46);color:#ffffff;}"
+            "QPushButton:pressed{background:rgba(8,145,178,61);}"
         )
         info_btn.clicked.connect(self._show_feature_info_dialog)
         info_col.addWidget(info_btn)
@@ -1041,5 +1111,10 @@ class MLInsightsPage(BasePage):
         v.addWidget(footer, 0, Qt.AlignTop)
         return card
 
+    def apply_theme(self, theme: str | None = None):
+        _refresh_palette(theme or current_theme())
+        self._populate_grid()
+
     def _on_show(self):
+        _refresh_palette(current_theme())
         self._populate_grid()

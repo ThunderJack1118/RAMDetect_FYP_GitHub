@@ -30,11 +30,14 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QSizePolicy,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer
+from PyQt5.QtGui import QFont, QPainter, QPen, QBrush, QColor
 
 from ui.widgets.header_bar       import HeaderBar
 from ui.widgets.process_tree_widget import ProcessTreeWidget
 from ui.bridge.session import AppState
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 try:
     from ramdetect.utils.process_confidence import confidence_label as _j10_conf_label, confidence_tooltip as _j10_conf_tooltip
@@ -50,22 +53,177 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SUSP_COL  = "#f87171"
-_SUSP_BG   = "rgba(248,113,113,0.15)"
-_SUSP_BRD  = "rgba(248,113,113,0.35)"
+_SUSP_BG   = "rgba(248,113,113,38)"
+_SUSP_BRD  = "rgba(248,113,113,89)"
 _CLEAN_COL = "#34d399"
-_CLEAN_BG  = "rgba(52,211,153,0.15)"
-_CLEAN_BRD = "rgba(52,211,153,0.35)"
+_CLEAN_BG  = "rgba(52,211,153,38)"
+_CLEAN_BRD = "rgba(52,211,153,89)"
+
+
+def _is_light() -> bool:
+    return (current_theme() or "dark").lower() == "light"
+
+
+def _pc() -> dict:
+    if _is_light():
+        return {
+            "card": "#ffffff",
+            "inner": "#f8fbff",
+            "border": "#d9e6ff",
+            "border2": "#c8d8f5",
+            "text": "#1e3a6e",
+            "text2": "#385f9f",
+            "muted": "#6b82b4",
+            "muted2": "#7b8fb8",
+            "cyan": "#1a56db",
+            "green": "#10b981",
+            "red": "#dc2626",
+            "green_bg": "#ecfdf5",
+            "green_brd": "#86efac",
+            "red_bg": "#fff1f2",
+            "red_brd": "#fecaca",
+            "soft": "#eef4ff",
+            "hover": "#eef4ff",
+        }
+    return {
+        "card": "rgba(30,41,59,115)",
+        "inner": "rgba(15,23,42,140)",
+        "border": "rgba(51,65,85,128)",
+        "border2": "rgba(51,65,85,153)",
+        "text": "#e2e8f0",
+        "text2": "#cbd5e1",
+        "muted": "#94a3b8",
+        "muted2": "#64748b",
+        "cyan": "#06b6d4",
+        "green": "#34d399",
+        "red": "#f87171",
+        "green_bg": "rgba(52,211,153,38)",
+        "green_brd": "rgba(52,211,153,89)",
+        "red_bg": "rgba(248,113,113,38)",
+        "red_brd": "rgba(248,113,113,89)",
+        "soft": "rgba(148,163,184,26)",
+        "hover": "rgba(51,65,85,71)",
+    }
+
+
+def _map_color(color: str) -> str:
+    if not _is_light():
+        return color
+    return {
+        "#ffffff": "#1e3a6e",
+        "#f8fafc": "#1e3a6e",
+        "#e2e8f0": "#1e3a6e",
+        "#cbd5e1": "#385f9f",
+        "#94a3b8": "#6b82b4",
+        "#64748b": "#7b8fb8",
+        "#475569": "#9aa8c3",
+        "#334155": "#5873a8",
+        "#06b6d4": "#1a56db",
+        "#67e8f9": "#1a56db",
+        "#34d399": "#10b981",
+        "#22c55e": "#10b981",
+        "#f87171": "#dc2626",
+        "#ef4444": "#dc2626",
+        "#fbbf24": "#d97706",
+        "#93c5fd": "#1a56db",
+    }.get(str(color).lower(), color)
+
+
+class _ProcessHoverTipBox(QFrame):
+    """Painted tooltip box with no QSS, matching Artifact Viewer tooltip style."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if _is_light():
+            bg, br = QColor("#ffffff"), QColor("#c8d8f5")
+        else:
+            bg, br = QColor("#1e293b"), QColor("#334155")
+        painter.setBrush(QBrush(bg))
+        painter.setPen(QPen(br, 1))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 9, 9)
+
+
+class _ProcessHoverTip(QWidget):
+    """Compact RAMDetect-owned tooltip for Process Explorer widgets.
+
+    Native QToolTip can inherit page/button styles on some Windows/PyQt builds,
+    causing oversized coloured boxes and clipped bold text. This widget mirrors
+    the Artifact Viewer tooltip design and leaves table/tree item data unchanged.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._box = _ProcessHoverTipBox()
+        outer.addWidget(self._box)
+
+        lay = QVBoxLayout(self._box)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(0)
+
+        self._label = QLabel("")
+        self._label.setWordWrap(True)
+        self._label.setFont(QFont("Segoe UI", 10))
+        self._label.setTextFormat(Qt.PlainText)
+        self._label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lay.addWidget(self._label)
+        self._apply_style()
+
+    def _apply_style(self):
+        fg = "#1e3a6e" if _is_light() else "#e2e8f0"
+        self._box.update()
+        self._label.setStyleSheet(
+            f"color:{fg};background:transparent;border:none;font-size:10px;font-weight:400;"
+        )
+
+    def show_for(self, anchor, text: str):
+        if anchor is None:
+            return
+        self._apply_style()
+        text = " ".join(str(text or "").split())
+        if not text:
+            return
+        self._label.setFixedWidth(460 if len(text) > 70 else 340)
+        self._label.setText(text)
+        self.adjustSize()
+
+        pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 7))
+        x, y = pos.x(), pos.y()
+        try:
+            screen = anchor.screen().availableGeometry()
+            x = min(max(screen.left() + 8, x), screen.right() - self.width() - 8)
+            if y + self.height() > screen.bottom() - 8:
+                y = anchor.mapToGlobal(QPoint(0, -self.height() - 7)).y()
+        except Exception:
+            pass
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    def hide_tip(self):
+        self.hide()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _card(border: str = "rgba(51,65,85,0.5)") -> QFrame:
+def _card(border: str | None = None) -> QFrame:
+    c = _pc()
     f = QFrame()
     f.setStyleSheet(
-        f"QFrame{{background:rgba(30,41,59,0.45);"
-        f"border:1px solid {border};border-radius:12px;}}"
+        f"QFrame{{background:{c['card']};"
+        f"border:1px solid {border or c['border']};border-radius:12px;}}"
     )
     return f
 
@@ -74,6 +232,7 @@ def _lbl(text: str, size: int = 12, bold: bool = False,
          color: str = "#94a3b8", wrap: bool = False,
          align=None) -> QLabel:
     l = QLabel(text)
+    color = _map_color(color)
     l.setStyleSheet(
         f"color:{color};background:transparent;border:none;"
         f"font-size:{size}px;font-weight:{'700' if bold else '400'};"
@@ -88,28 +247,22 @@ def _lbl(text: str, size: int = 12, bold: bool = False,
 def _hdiv() -> QFrame:
     d = QFrame()
     d.setFixedHeight(1)
-    d.setStyleSheet("background:rgba(51,65,85,0.4);border:none;")
+    d.setStyleSheet(f"background:{_pc()['border']};border:none;")
     return d
 
 
 def _status_pill(status: str) -> QLabel:
-    """Solid filled curved-rectangle badge — matches image 1 style."""
+    """Theme-aware curved status badge."""
     is_susp = status == "suspicious"
+    c = _pc()
     if is_susp:
-        col = "#ffffff"
-        bg  = "rgba(239,68,68,0.85)"
-        brd = "rgba(239,68,68,1.0)"
-        txt = "⚠  SUSPICIOUS"
+        col, bg, brd, txt = c["red"], c["red_bg"], c["red_brd"], "⚠  SUSPICIOUS"
     else:
-        col = "#ffffff"
-        bg  = "rgba(16,185,129,0.90)"
-        brd = "rgba(16,185,129,1.0)"
-        txt = "✓  CLEAN"
+        col, bg, brd, txt = c["green"], c["green_bg"], c["green_brd"], "✓  CLEAN"
     lbl = QLabel(txt)
     lbl.setStyleSheet(
         f"color:{col};background:{bg};border:1.5px solid {brd};"
-        f"border-radius:8px;padding:5px 16px;"          # curved rect, not pill
-        f"font-size:12px;font-weight:700;"
+        "border-radius:8px;padding:5px 16px;font-size:12px;font-weight:800;"
     )
     lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     return lbl
@@ -125,7 +278,8 @@ class ProcessExplorerPage(QWidget):
         self.mw         = main_window
         self._susp_only = False
         self._processes = []
-        self.setStyleSheet("background:transparent;")
+        self._hover_tip = None
+        set_role(self, "transparent")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -140,7 +294,7 @@ class ProcessExplorerPage(QWidget):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(30, 20, 30, 20)
+        body.setContentsMargins(40, 20, 40, 20)
         body.setSpacing(20)
 
         # Left (stretch=3): ProcessTreeWidget in a card
@@ -150,12 +304,9 @@ class ProcessExplorerPage(QWidget):
         # corners on the tree via the widget's own QSS, so the card edge
         # is always covered by a rounded child — no jagged line visible.
         tree_card = QFrame()
+        self._tree_card = tree_card
         tree_card.setStyleSheet(
-            "QFrame{"
-            "  background:rgba(30,41,59,0.45);"
-            "  border:1px solid rgba(51,65,85,0.5);"
-            "  border-radius:12px;"
-            "}"
+            f"QFrame{{background:{_pc()['card']};border:1px solid {_pc()['border']};border-radius:12px;}}"
         )
         tc_vb = QVBoxLayout(tree_card)
         tc_vb.setContentsMargins(0, 0, 0, 0)
@@ -177,6 +328,71 @@ class ProcessExplorerPage(QWidget):
         body.addWidget(self._details_panel, stretch=2)
 
         root.addLayout(body, stretch=1)
+
+        # Convert existing native widget tooltips into the same compact
+        # RAMDetect-owned tooltip design used by Artifact Viewer.
+        QTimer.singleShot(0, self._proxy_native_tooltips)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Compact tooltip proxy  (same behaviour as Artifact Viewer toolbar tips)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        tip_text = ""
+        try:
+            tip_text = obj.property("ramdetectProcessTip") or ""
+        except Exception:
+            tip_text = ""
+        if tip_text:
+            if event.type() == QEvent.Enter:
+                self._show_process_hover_tip(obj, tip_text)
+            elif event.type() in (QEvent.Leave, QEvent.MouseButtonPress, QEvent.Hide):
+                self._hide_process_hover_tip()
+        return super().eventFilter(obj, event)
+
+    def _register_hover_tip(self, widget, text: str):
+        """Attach compact tooltip to a widget and suppress native QToolTip."""
+        if widget is None:
+            return
+        text = str(text or "").strip()
+        if not text:
+            return
+        try:
+            widget.setToolTip("")
+            widget.setProperty("ramdetectProcessTip", text)
+            widget.installEventFilter(self)
+        except Exception:
+            pass
+
+    def _proxy_native_tooltips(self):
+        """Replace existing child-widget native tooltips with compact tips.
+
+        This covers HeaderBar buttons, ProcessTreeWidget controls, search boxes,
+        and any detail labels that already expose widget-level tooltip text.
+        It does not touch backend data or tree item contents.
+        """
+        try:
+            for widget in self.findChildren(QWidget):
+                if widget is self or widget is getattr(self, "_hover_tip", None):
+                    continue
+                if isinstance(widget, _ProcessHoverTip) or isinstance(widget, _ProcessHoverTipBox):
+                    continue
+                if widget.property("ramdetectProcessTip"):
+                    continue
+                tip = str(widget.toolTip() or "").strip()
+                if tip:
+                    self._register_hover_tip(widget, tip)
+        except Exception:
+            pass
+
+    def _show_process_hover_tip(self, widget, text: str):
+        if self._hover_tip is None:
+            self._hover_tip = _ProcessHoverTip(self)
+        self._hover_tip.show_for(widget, text)
+
+    def _hide_process_hover_tip(self):
+        if self._hover_tip is not None:
+            self._hover_tip.hide_tip()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Left — Process tree card
@@ -265,9 +481,9 @@ class ProcessExplorerPage(QWidget):
         pl.setSpacing(10)
         eye = QLabel("👁")
         eye.setAlignment(Qt.AlignCenter)
-        eye.setStyleSheet("font-size:44px;background:transparent;border:none;color:#334155;")
+        eye.setStyleSheet(f"font-size:44px;background:transparent;border:none;color:{_pc()['muted2']};")
         pl.addWidget(eye)
-        pl.addWidget(_lbl("Select a process to view details", 12, color="#475569",
+        pl.addWidget(_lbl("Select a process to view details", 12, color=_pc()["muted2"],
                           align=Qt.AlignCenter))
         self._details_layout.addWidget(placeholder, stretch=1)
 
@@ -285,6 +501,7 @@ class ProcessExplorerPage(QWidget):
             self._details_layout.addWidget(self._build_anomalies_card(proc), stretch=1)
         else:
             self._details_layout.addWidget(self._build_clean_card(), stretch=1)
+        QTimer.singleShot(0, self._proxy_native_tooltips)
 
     def _build_info_card(self, proc: dict) -> QFrame:
         """Process Details card — label above value, matching wireframe."""
@@ -309,7 +526,7 @@ class ProcessExplorerPage(QWidget):
             val = QLabel(value)
             val.setWordWrap(True)
             val.setStyleSheet(
-                "color:#e2e8f0;background:transparent;border:none;"
+                f"color:{_pc()['text']};background:transparent;border:none;"
                 + ("font-family:'Courier New';font-size:11px;"
                    if mono else "font-size:11px;")
             )
@@ -347,13 +564,13 @@ class ProcessExplorerPage(QWidget):
         conf_label = _j10_conf_label(proc)
         conf_value = QLabel(conf_label)
         conf_value.setWordWrap(True)
-        conf_color = "#fbbf24" if "Low-confidence" in conf_label else ("#93c5fd" if "Medium" in conf_label else "#34d399")
+        conf_color = _map_color("#fbbf24" if "Low-confidence" in conf_label else ("#93c5fd" if "Medium" in conf_label else "#34d399"))
         conf_value.setStyleSheet(
-            f"color:{conf_color};background:rgba(51,65,85,0.20);"
-            "border:1px solid rgba(51,65,85,0.45);border-radius:6px;"
+            f"color:{conf_color};background:{_pc()['soft']};"
+            f"border:1px solid {_pc()['border']};border-radius:6px;"
             "padding:5px 8px;font-size:11px;font-weight:700;"
         )
-        conf_value.setToolTip(_j10_conf_tooltip(proc))
+        self._register_hover_tip(conf_value, _j10_conf_tooltip(proc))
         iv.addWidget(_lbl("Process Confidence", 8, color="#94a3b8"))
         iv.addWidget(conf_value)
 
@@ -373,8 +590,7 @@ class ProcessExplorerPage(QWidget):
 
         card = QFrame()
         card.setStyleSheet(
-            "QFrame{background:rgba(30,41,59,0.45);"
-            "border:1px solid rgba(248,113,113,0.4);border-radius:12px;}"
+            f"QFrame{{background:{_pc()['card']};border:1px solid {_pc()['red_brd']};border-radius:12px;}}"
         )
         cv = QVBoxLayout(card)
         cv.setContentsMargins(18, 14, 18, 14)
@@ -403,21 +619,20 @@ class ProcessExplorerPage(QWidget):
             af = QFrame()
             af.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             af.setStyleSheet(
-                "QFrame{background:rgba(248,113,113,0.08);"
-                "border-left:4px solid #ef4444;border-radius:6px;}"
+                f"QFrame{{background:{_pc()['red_bg']};border-left:4px solid {_pc()['red']};border-radius:6px;}}"
             )
             afv = QVBoxLayout(af)
             afv.setContentsMargins(10, 6, 10, 6)
             afv.setSpacing(2)
             t = QLabel(atype.upper())
             t.setStyleSheet(
-                "color:#f87171;background:transparent;border:none;"
+                f"color:{_pc()['red']};background:transparent;border:none;"
                 "font-size:11px;font-weight:700;"
             )
             d = QLabel(detail)
             d.setWordWrap(True)
             d.setStyleSheet(
-                "color:#cbd5e1;background:transparent;border:none;font-size:11px;"
+                f"color:{_pc()['text2']};background:transparent;border:none;font-size:11px;"
             )
             afv.addWidget(t)
             afv.addWidget(d)
@@ -430,8 +645,7 @@ class ProcessExplorerPage(QWidget):
         """Clean status card — matches image 1: title + divider + circular icon + text."""
         card = QFrame()
         card.setStyleSheet(
-            "QFrame{background:rgba(30,41,59,0.45);"
-            "border:1px solid rgba(52,211,153,0.4);border-radius:12px;}"
+            f"QFrame{{background:{_pc()['card']};border:1px solid {_pc()['green_brd']};border-radius:12px;}}"
         )
         cv = QVBoxLayout(card)
         cv.setContentsMargins(18, 14, 18, 14)
@@ -450,12 +664,9 @@ class ProcessExplorerPage(QWidget):
         ck.setFixedSize(64, 64)
         ck.setAlignment(Qt.AlignCenter)
         ck.setStyleSheet(
-            "color:#34d399;"
-            "background:rgba(52,211,153,0.15);"
-            "border:2px solid rgba(52,211,153,0.5);"
-            "border-radius:32px;"           # perfect circle
-            "font-size:32px;"
-            "font-weight:700;"
+            f"color:{_pc()['green']};background:{_pc()['green_bg']};"
+            f"border:2px solid {_pc()['green_brd']};border-radius:32px;"
+            "font-size:32px;font-weight:700;"
         )
         icon_wrap.addWidget(ck)
         cv.addLayout(icon_wrap)
@@ -469,6 +680,17 @@ class ProcessExplorerPage(QWidget):
         cv.addStretch()
         return card
 
+    def apply_theme(self, theme: str | None = None) -> None:
+        if hasattr(self, '_tree_card'):
+            self._tree_card.setStyleSheet(
+                f"QFrame{{background:{_pc()['card']};border:1px solid {_pc()['border']};border-radius:12px;}}"
+            )
+        if hasattr(self, '_proc_tree') and hasattr(self._proc_tree, 'apply_theme'):
+            self._proc_tree.apply_theme(theme or current_theme())
+        # Details cards use inline colours; rebuild them safely on theme switch.
+        self._show_no_selection()
+        QTimer.singleShot(0, self._proxy_native_tooltips)
+
     # ─────────────────────────────────────────────────────────────────────────
     # showEvent
     # ─────────────────────────────────────────────────────────────────────────
@@ -476,3 +698,4 @@ class ProcessExplorerPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._reload()
+        QTimer.singleShot(0, self._proxy_native_tooltips)

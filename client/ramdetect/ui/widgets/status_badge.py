@@ -18,6 +18,7 @@ Usage
 
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel
 from PyQt5.QtGui     import QFont
+from ui.style_helpers import set_state, set_tone
 
 
 class StatusBadge(QWidget):
@@ -101,16 +102,10 @@ class StatusBadge(QWidget):
 
         col = style["color"]
         self._icon_lbl.setText(style["icon"])
-        self._icon_lbl.setStyleSheet(f"color: {col}; background: transparent;")
+        set_tone(self._icon_lbl, col)
 
         self._text_lbl.setText(style["text"])
-        self._text_lbl.setStyleSheet(f"color: {col}; background: transparent;")
+        set_tone(self._text_lbl, col)
 
-        self.setStyleSheet(
-            f"StatusBadge {{"
-            f"  background: {style['bg']};"
-            f"  border: 1px solid {style['border']};"
-            f"  border-radius: 14px;"
-            f"}}"
-        )
+        set_state(self, key if key in self.STYLES else "unknown")
         self.update()

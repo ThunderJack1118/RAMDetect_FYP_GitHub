@@ -51,6 +51,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QRect
 from PyQt5.QtGui  import QFont, QColor, QPainter, QPalette
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
 
 
 # ── constants ──────────────────────────────────────────────────────────────────
@@ -59,6 +61,69 @@ _HDR_HEIGHT = 36          # column-header row height
 _INDENT     = 22          # per-level indentation; compact enough for long names
 _ROW_H      = 44          # fixed row height
 _BRANCH_W   = 24          # fixed chevron/leaf indicator area in column 0
+
+
+def _is_light() -> bool:
+    return (current_theme() or "dark").lower() == "light"
+
+
+def _tc(dark: str, light: str) -> str:
+    return light if _is_light() else dark
+
+
+def _tree_colors() -> dict:
+    if _is_light():
+        return {
+            "text": "#1e3a6e",
+            "text_soft": "#385f9f",
+            "muted": "#6b82b4",
+            "muted2": "#7b8fb8",
+            "panel": "#ffffff",
+            "panel2": "#f8fbff",
+            "header": "#eaf1ff",
+            "border": "#d9e6ff",
+            "accent": "#1a56db",
+            "cyan": "#1a56db",
+            "green": "#10b981",
+            "red": "#dc2626",
+            "hover": "#eef4ff",
+            "selected": "#dbeafe",
+            "scroll": "#9fb7e5",
+        }
+    return {
+        "text": "#e2e8f0",
+        "text_soft": "#cbd5e1",
+        "muted": "#94a3b8",
+        "muted2": "#64748b",
+        "panel": "rgba(30,41,59,115)",
+        "panel2": "rgba(15,23,42,140)",
+        "header": "rgba(51,65,85,76)",
+        "border": "rgba(51,65,85,153)",
+        "accent": "#06b6d4",
+        "cyan": "#06b6d4",
+        "green": "#34d399",
+        "red": "#f87171",
+        "hover": "rgba(51,65,85,82)",
+        "selected": "rgba(6,182,212,41)",
+        "scroll": "rgba(71,85,105,204)",
+    }
+
+
+def _map_qcolor(color: str) -> QColor:
+    if not _is_light():
+        return QColor(color)
+    return QColor({
+        "#ffffff": "#1e3a6e",
+        "#e2e8f0": "#1e3a6e",
+        "#cbd5e1": "#385f9f",
+        "#94a3b8": "#6b82b4",
+        "#64748b": "#7b8fb8",
+        "#475569": "#9aa8c3",
+        "#06b6d4": "#1a56db",
+        "#67e8f9": "#1a56db",
+        "#34d399": "#10b981",
+        "#f87171": "#dc2626",
+    }.get(str(color).lower(), color))
 
 
 class _FixedPaddingDelegate(QStyledItemDelegate):
@@ -87,9 +152,9 @@ class _FixedPaddingDelegate(QStyledItemDelegate):
         is_hovered  = bool(option.state & QStyle.State_MouseOver)
 
         if is_selected:
-            painter.fillRect(option.rect, QColor(6, 182, 212, 38))
+            painter.fillRect(option.rect, QColor(219, 234, 254, 220) if _is_light() else QColor(6, 182, 212, 38))
         elif is_hovered:
-            painter.fillRect(option.rect, QColor(255, 255, 255, 28))
+            painter.fillRect(option.rect, QColor(238, 244, 255, 255) if _is_light() else QColor(255, 255, 255, 28))
 
         col = index.column()
         item = self._tree.itemFromIndex(index)
@@ -110,7 +175,7 @@ class _FixedPaddingDelegate(QStyledItemDelegate):
         font  = index.data(Qt.FontRole)
         if font:
             painter.setFont(font)
-        painter.setPen(color.color() if color else QColor("#e2e8f0"))
+        painter.setPen(color.color() if color else _map_qcolor("#e2e8f0"))
 
         if col == 0:
             # Draw a clean custom branch indicator instead of embedding ▼/▶ in text.
@@ -126,22 +191,22 @@ class _FixedPaddingDelegate(QStyledItemDelegate):
 
             if has_children:
                 arrow = "▾" if is_expanded else "▸"
-                painter.setPen(QColor("#cbd5e1"))
+                painter.setPen(_map_qcolor("#cbd5e1"))
                 arrow_font = QFont("Segoe UI", 12, QFont.Bold)
                 painter.setFont(arrow_font)
                 painter.drawText(arrow_rect, Qt.AlignVCenter | Qt.AlignLeft, arrow)
                 if font:
                     painter.setFont(font)
-                painter.setPen(color.color() if color else QColor("#e2e8f0"))
+                painter.setPen(color.color() if color else _map_qcolor("#e2e8f0"))
             else:
                 # Keep leaf rows aligned with branch rows.
-                painter.setPen(QColor("#475569"))
+                painter.setPen(_map_qcolor("#475569"))
                 leaf_font = QFont("Segoe UI", 8)
                 painter.setFont(leaf_font)
                 painter.drawText(arrow_rect, Qt.AlignVCenter | Qt.AlignLeft, "•")
                 if font:
                     painter.setFont(font)
-                painter.setPen(color.color() if color else QColor("#e2e8f0"))
+                painter.setPen(color.color() if color else _map_qcolor("#e2e8f0"))
 
             raw_text = (
                 item.data(0, Qt.UserRole + 2)
@@ -188,7 +253,7 @@ class ProcessTreeWidget(QWidget):
         self._processes   = []
         self._susp_only   = False
         self._search_text = ""
-        self.setStyleSheet("background: transparent;")
+        set_role(self, "transparent")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -196,6 +261,109 @@ class ProcessTreeWidget(QWidget):
 
         root.addWidget(self._build_header())
         root.addWidget(self._build_tree(), 1)
+        self.apply_theme(current_theme())
+
+    # ── theme styles ─────────────────────────────────────────────────────────
+
+    def _style_header_bar(self) -> str:
+        c = _tree_colors()
+        return (
+            "QFrame{"
+            f"background:{c['panel2']};"
+            f"border-bottom:1px solid {c['border']};"
+            "border-top-left-radius:12px;border-top-right-radius:12px;"
+            "border-bottom-left-radius:0px;border-bottom-right-radius:0px;}"
+        )
+
+    def _style_title(self) -> str:
+        c = _tree_colors()
+        return f"color:{c['text']};background:transparent;border:none;font-size:15px;font-weight:700;"
+
+    def _style_small_button(self, active: bool = False, danger: bool = False) -> str:
+        c = _tree_colors()
+        if active:
+            fg = c['red'] if danger else c['accent']
+            bg = '#fff1f2' if (_is_light() and danger) else ('#eef4ff' if _is_light() else 'rgba(6,182,212,36)')
+            br = '#fecaca' if (_is_light() and danger) else c['accent']
+        else:
+            fg = c['muted']
+            bg = c['panel2']
+            br = c['border']
+        return (
+            "QPushButton{"
+            f"background:{bg};border:1px solid {br};border-radius:8px;color:{fg};"
+            "padding:0px 10px;font-size:11px;font-weight:700;}"
+            f"QPushButton:hover{{background:{c['hover']};color:{c['text']};border-color:{c['accent']};}}"
+        )
+
+    def _style_search(self) -> str:
+        c = _tree_colors()
+        return (
+            "QLineEdit{"
+            f"background:{c['panel']};border:1px solid {c['border']};"
+            f"border-radius:8px;padding:0px 12px;color:{c['text']};font-size:13px;"
+            "}"
+            f"QLineEdit:focus{{border-color:{c['accent']};background:{c['panel2']};}}"
+        )
+
+    def _style_tree(self) -> str:
+        c = _tree_colors()
+        return (
+            "QTreeWidget {background: transparent; border: none;"
+            f"color:{c['text']}; font-size: 13px;"
+            "}"
+            "QTreeWidget::item{padding:0px;}QTreeWidget::item:hover{padding:0px;}"
+            "QTreeWidget::item:selected{padding:0px;}"
+            "QTreeWidget::branch{image:none;width:0px;border:none;}"
+        )
+
+    def _style_tree_header(self) -> str:
+        c = _tree_colors()
+        return (
+            f"QHeaderView {{ background:{c['header']}; border:none; border-radius:0px; }}"
+            "QHeaderView::section {"
+            f"background:{c['header']}; color:{c['muted']};"
+            "padding:0px 8px 0px 24px;border:none;border-radius:0px;margin:0px;"
+            f"border-bottom:1px solid {c['border']};"
+            "font-weight:700;font-size:12px;}"
+            "QHeaderView::section:last{border-radius:0px;}"
+        )
+
+    def _style_scrollbar(self) -> str:
+        c = _tree_colors()
+        return (
+            "QScrollBar:vertical {background:transparent;width:6px;border-radius:3px;margin:0px;}"
+            f"QScrollBar::handle:vertical {{background:{c['scroll']};border-radius:3px;min-height:30px;}}"
+            f"QScrollBar::handle:vertical:hover {{background:{c['accent']};}}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}"
+        )
+
+    def apply_theme(self, theme: str | None = None) -> None:
+        c = _tree_colors()
+        if hasattr(self, '_header_bar'):
+            self._header_bar.setStyleSheet(self._style_header_bar())
+        if hasattr(self, '_title_lbl'):
+            self._title_lbl.setStyleSheet(self._style_title())
+        if hasattr(self, '_expand_btn'):
+            self._expand_btn.setStyleSheet(self._style_small_button())
+        if hasattr(self, '_collapse_btn'):
+            self._collapse_btn.setStyleSheet(self._style_small_button())
+        if hasattr(self, '_susp_btn'):
+            self._susp_btn.setStyleSheet(self._style_small_button(self._susp_only, danger=True))
+        if hasattr(self, '_search'):
+            self._search.setStyleSheet(self._style_search())
+        if hasattr(self, '_tree'):
+            self._tree.setStyleSheet(self._style_tree())
+            self._tree.header().setStyleSheet(self._style_tree_header())
+            self._tree.viewport().setStyleSheet("QWidget { background: transparent; }")
+        if hasattr(self, '_overlay_sb'):
+            self._overlay_sb.setStyleSheet(self._style_scrollbar())
+        if hasattr(self, '_header_gutter'):
+            self._header_gutter.setStyleSheet(
+                f"QFrame {{background:{c['header']};border:none;border-bottom:1px solid {c['border']};border-radius:0px;}}"
+            )
+        self._repopulate()
 
     # ── header : title row + search row ──────────────────────────────────────
     # Mirrors React:
@@ -208,17 +376,9 @@ class ProcessTreeWidget(QWidget):
 
     def _build_header(self) -> QFrame:
         bar = QFrame()
+        self._header_bar = bar
         bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        bar.setStyleSheet(
-            "QFrame{"
-            "  background: rgba(15,23,42,0.40);"
-            "  border-bottom: 1px solid rgba(51,65,85,0.50);"
-            "  border-top-left-radius:  12px;"
-            "  border-top-right-radius: 12px;"
-            "  border-bottom-left-radius:  0px;"
-            "  border-bottom-right-radius: 0px;"
-            "}"
-        )
+        bar.setStyleSheet(self._style_header_bar())
         outer = QVBoxLayout(bar)
         outer.setContentsMargins(_PAD_LEFT, 16, _PAD_LEFT, 16)
         outer.setSpacing(12)
@@ -229,66 +389,29 @@ class ProcessTreeWidget(QWidget):
         row1.setSpacing(8)
 
         title = QLabel("Process Tree")
-        title.setStyleSheet(
-            "color:#ffffff; background:transparent; border:none;"
-            "font-size:15px; font-weight:700;"
-        )
+        self._title_lbl = title
+        title.setStyleSheet(self._style_title())
         row1.addWidget(title)
         row1.addStretch()
 
         self._expand_btn = QPushButton("Expand All")
         self._expand_btn.setFixedHeight(32)
         self._expand_btn.setCursor(Qt.PointingHandCursor)
-        self._expand_btn.setStyleSheet(
-            "QPushButton{"
-            "  background: transparent;"
-            "  border: 1px solid rgba(6,182,212,0.28);"
-            "  border-radius: 8px;"
-            "  color: #06b6d4;"
-            "  padding: 0px 10px;"
-            "  font-size: 11px; font-weight: 600;"
-            "}"
-            "QPushButton:hover{ background: rgba(6,182,212,0.10); color:#67e8f9; }"
-        )
+        self._expand_btn.setStyleSheet(self._style_small_button())
         self._expand_btn.clicked.connect(self._expand_all)
         row1.addWidget(self._expand_btn)
 
         self._collapse_btn = QPushButton("Collapse All")
         self._collapse_btn.setFixedHeight(32)
         self._collapse_btn.setCursor(Qt.PointingHandCursor)
-        self._collapse_btn.setStyleSheet(
-            "QPushButton{"
-            "  background: transparent;"
-            "  border: 1px solid rgba(51,65,85,0.70);"
-            "  border-radius: 8px;"
-            "  color: #94a3b8;"
-            "  padding: 0px 10px;"
-            "  font-size: 11px; font-weight: 600;"
-            "}"
-            "QPushButton:hover{ background: rgba(51,65,85,0.40); color:#ffffff; }"
-        )
+        self._collapse_btn.setStyleSheet(self._style_small_button())
         self._collapse_btn.clicked.connect(self._collapse_all)
         row1.addWidget(self._collapse_btn)
 
         self._susp_btn = QPushButton("⚠  Suspicious")
         self._susp_btn.setFixedHeight(32)
         self._susp_btn.setCheckable(True)
-        self._susp_btn.setStyleSheet(
-            "QPushButton{"
-            "  background: rgba(51,65,85,0.40);"
-            "  border: 1px solid rgba(51,65,85,0.60);"
-            "  border-radius: 8px;"
-            "  color: #94a3b8;"
-            "  padding: 0px 14px;"
-            "  font-size: 12px; font-weight: 500;"
-            "}"
-            "QPushButton:checked{"
-            "  background: rgba(248,113,113,0.18);"
-            "  color: #f87171;"
-            "  border-color: rgba(248,113,113,0.45);"
-            "}"
-            "QPushButton:hover{ background: rgba(71,85,105,0.55); color:#ffffff; }"
-        )
+        self._susp_btn.setStyleSheet(self._style_small_button(False, danger=True))
         self._susp_btn.clicked.connect(self._on_toggle_susp)
         row1.addWidget(self._susp_btn)
         outer.addLayout(row1)
@@ -297,17 +420,7 @@ class ProcessTreeWidget(QWidget):
         self._search = QLineEdit()
         self._search.setPlaceholderText("🔍  Search processes…")
         self._search.setFixedHeight(36)
-        self._search.setStyleSheet(
-            "QLineEdit{"
-            "  background: rgba(15,23,42,0.55);"
-            "  border: 1px solid rgba(51,65,85,0.60);"
-            "  border-radius: 8px;"
-            "  padding: 0px 12px;"
-            "  color: #ffffff;"
-            "  font-size: 13px;"
-            "}"
-            "QLineEdit:focus{ border-color: #06b6d4; }"
-        )
+        self._search.setStyleSheet(self._style_search())
         self._search.textChanged.connect(self._on_search)
         outer.addWidget(self._search)
 
@@ -355,33 +468,12 @@ class ProcessTreeWidget(QWidget):
         # The header is drawn outside the viewport so its padding controls it
         # independently.
         self._tree.setViewportMargins(0, 0, 0, 0)
-        self._tree.setStyleSheet(
-            "QTreeWidget {"
-            "  background: transparent; border: none;"
-            "  color: #ffffff; font-size: 13px; outline: none;"
-            "}"
-            # No padding rules at all — delegate handles all positioning
-            "QTreeWidget::item          { padding: 0px; }"
-            "QTreeWidget::item:hover    { padding: 0px; }"
-            "QTreeWidget::item:selected { padding: 0px; }"
-            "QTreeWidget::branch { image: none; width: 0px; border: none; }"
-        )
+        self._tree.setStyleSheet(self._style_tree())
         self._tree.setItemDelegate(_FixedPaddingDelegate(self._tree))
         self._tree.viewport().setStyleSheet("QWidget { background: transparent; }")
 
         # ── column header ──────────────────────────────────────────────────
-        self._tree.header().setStyleSheet(
-            "QHeaderView { background: rgba(51,65,85,0.30); border: none; border-radius: 0px; }"
-            "QHeaderView::section {"
-            "  background: rgba(51,65,85,0.30); color: #cbd5e1;"
-            "  padding: 0px 8px 0px 24px;"
-            "  border: none;"
-            "  border-bottom: 1px solid rgba(51,65,85,0.60);"
-            "  border-radius: 0px; margin: 0px;"
-            "  font-weight: 600; font-size: 12px;"
-            "}"
-            "QHeaderView::section:last { border-radius: 0px; }"
-        )
+        self._tree.header().setStyleSheet(self._style_tree_header())
         self._tree.header().setContentsMargins(0, 0, 0, 0)
 
         # corner widget fills the top-right patch between last header section
@@ -390,9 +482,9 @@ class ProcessTreeWidget(QWidget):
         corner = _QW(self._tree)
         corner.setFixedHeight(_HDR_HEIGHT)
         corner.setStyleSheet(
-            "background: rgba(51,65,85,0.30);"
-            "border-bottom: 1px solid rgba(51,65,85,0.60);"
-            "border-radius: 0px;"
+            f"background:{_tree_colors()['header']};"
+            f"border-bottom:1px solid {_tree_colors()['border']};"
+            "border-radius:0px;"
         )
         self._tree.setCornerWidget(corner)
 
@@ -410,33 +502,12 @@ class ProcessTreeWidget(QWidget):
         # Positioned in resizeEvent: x = right edge, y = _HDR_HEIGHT.
         self._overlay_sb = QScrollBar(_Qt.Vertical, container)
         self._overlay_sb.setFixedWidth(6)
-        self._overlay_sb.setStyleSheet(
-            "QScrollBar:vertical {"
-            "  background: transparent; width: 6px;"
-            "  border-radius: 3px; margin: 0px;"
-            "}"
-            "QScrollBar::handle:vertical {"
-            "  background: rgba(71,85,105,0.80);"
-            "  border-radius: 3px; min-height: 30px;"
-            "}"
-            "QScrollBar::handle:vertical:hover { background: #06b6d4; }"
-            "QScrollBar::add-line:vertical,"
-            "QScrollBar::sub-line:vertical { height: 0; }"
-            "QScrollBar::add-page:vertical,"
-            "QScrollBar::sub-page:vertical { background: transparent; }"
-        )
+        self._overlay_sb.setStyleSheet(self._style_scrollbar())
 
         # Header filler for the reserved scrollbar gutter so the column-header
         # band visually reaches the right edge above the row scrollbar.
         self._header_gutter = QFrame(container)
-        self._header_gutter.setStyleSheet(
-            "QFrame {"
-            "  background: rgba(51,65,85,0.30);"
-            "  border: none;"
-            "  border-bottom: 1px solid rgba(51,65,85,0.60);"
-            "  border-radius: 0px;"
-            "}"
-        )
+        self._header_gutter.setStyleSheet(f"QFrame {{background:{_tree_colors()['header']};border:none;border-bottom:1px solid {_tree_colors()['border']};border-radius:0px;}}")
 
         # Sync overlay scrollbar ↔ tree's internal scroll model
         tree_sb = self._tree.verticalScrollBar()
@@ -514,6 +585,7 @@ class ProcessTreeWidget(QWidget):
     def set_suspicious_only(self, enabled: bool):
         self._susp_only = enabled
         self._susp_btn.setChecked(enabled)
+        self._susp_btn.setStyleSheet(self._style_small_button(enabled, danger=True))
         self._repopulate()
 
     def clear(self):
@@ -640,17 +712,17 @@ class ProcessTreeWidget(QWidget):
 
                 item.setFont(0, QFont("Segoe UI", 12,
                                       QFont.Bold if is_susp else QFont.Normal))
-                item.setForeground(0, QColor("#f87171" if is_susp else "#e2e8f0"))
+                item.setForeground(0, _map_qcolor("#f87171" if is_susp else "#e2e8f0"))
 
                 for col in [1, 2]:
                     item.setFont(col, QFont("Courier New", 11))
-                    item.setForeground(col, QColor("#94a3b8"))
+                    item.setForeground(col, _map_qcolor("#94a3b8"))
                 for col in [3, 4]:
                     item.setFont(col, QFont("Segoe UI", 11))
-                    item.setForeground(col, QColor("#94a3b8"))
+                    item.setForeground(col, _map_qcolor("#94a3b8"))
 
                 item.setFont(5, QFont("Segoe UI", 11, QFont.Bold))
-                item.setForeground(5, QColor("#f87171" if is_susp else "#34d399"))
+                item.setForeground(5, _map_qcolor("#f87171" if is_susp else "#34d399"))
 
                 _add(proc.get("children", []), item, level + 1)
                 if has_kids:
@@ -691,6 +763,7 @@ class ProcessTreeWidget(QWidget):
 
     def _on_toggle_susp(self, checked: bool):
         self._susp_only = checked
+        self._susp_btn.setStyleSheet(self._style_small_button(checked, danger=True))
         self._repopulate()
 
     def _on_selection(self):

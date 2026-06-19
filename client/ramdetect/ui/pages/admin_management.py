@@ -14,9 +14,10 @@ Random Forest, Autoencoder, threshold, or verdict logic.
 from __future__ import annotations
 
 import re
+from ui.style_helpers import set_role, set_tone
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont, QPen
+from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtGui import QColor, QFont, QPen, QBitmap, QPainter
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -74,8 +75,8 @@ class _CleanLastColumnDelegate(QStyledItemDelegate):
 
         painter.save()
 
-        row_line = QColor("#1e293b")
-        col_line = QColor("#26334d")
+        row_line = QColor(_admin_table_row_line())
+        col_line = QColor(_admin_table_col_line())
         rect = option.rect
 
         # Horizontal row separator.
@@ -91,17 +92,110 @@ class _CleanLastColumnDelegate(QStyledItemDelegate):
 
         painter.restore()
 
+def _admin_default_text() -> str:
+    return "#1e3a6e" if _is_light() else "#dbeafe"
+
+
+def _admin_role_text() -> str:
+    return "#1a56db" if _is_light() else "#06b6d4"
+
+
+def _admin_active_text() -> str:
+    return "#16a34a" if _is_light() else "#22c55e"
+
+
+def _admin_danger_text() -> str:
+    return "#dc2626" if _is_light() else "#ef4444"
+
+
+def _admin_warning_text() -> str:
+    return "#d97706" if _is_light() else "#f59e0b"
+
+
 def _item(text: str, color: str | None = None, bold: bool = False) -> QTableWidgetItem:
     it = QTableWidgetItem("" if text is None else str(text))
     it.setFlags(it.flags() & ~Qt.ItemIsEditable)
     it.setToolTip(it.text())
-    if color:
-        it.setForeground(QColor(color))
-    if bold:
-        f = QFont("Segoe UI", 9)
-        f.setBold(True)
-        it.setFont(f)
+    it.setForeground(QColor(color or _admin_default_text()))
+    f = QFont("Segoe UI", 9)
+    f.setBold(bool(bold))
+    it.setFont(f)
     return it
+
+def _admin_table_border_colour() -> str:
+    return "#7fa7ea" if _is_light() else "#536684"
+
+
+
+def _apply_rounded_table_mask(widget: QWidget, radius: int = 12) -> None:
+    """Clip table/card child painting to the rounded outer table shape."""
+    try:
+        if widget is None or widget.width() <= 2 or widget.height() <= 2:
+            return
+        mask = QBitmap(widget.size())
+        mask.fill(Qt.color0)
+        painter = QPainter(mask)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(Qt.color1)
+        painter.drawRoundedRect(mask.rect(), radius, radius)
+        painter.end()
+        widget.setMask(mask)
+    except Exception:
+        try:
+            widget.clearMask()
+        except Exception:
+            pass
+
+
+class _AdminTableBorderOverlay(QWidget):
+    """Paint the table outline above the QHeaderView and table viewport.
+
+    In Qt, the header and viewport are child widgets.  A normal QSS border can
+    be hidden by those children, especially in light mode where the square
+    header background is visible.  This overlay keeps all four rounded table
+    edges visible while the table remains fully interactive.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        # Do not custom-paint on a transparent child widget.  The table view QSS
+        # now owns the visible border.  Painting here caused repeated Qt
+        # "paintEngine / painter not active" warnings when pages were opened.
+        return super().paintEvent(event)
+
+
+class _RoundedTableCard(QFrame):
+    """Rounded table shell that clips square header/table corners."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._border_overlay = None
+
+    def _sync_mask_and_border(self):
+        # Clip the table and its card together so header/row backgrounds cannot
+        # show square corners beyond the rounded table outline.  This avoids the
+        # previous transparent overlay paintEvent that caused Qt paint warnings.
+        _apply_rounded_table_mask(self, 12)
+        try:
+            table = self.findChild(QTableWidget)
+            if table is not None:
+                _apply_rounded_table_mask(table, 12)
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_mask_and_border()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_mask_and_border()
+
 
 def _table_card(table: QTableWidget) -> QFrame:
     """Rounded table container.
@@ -109,17 +203,14 @@ def _table_card(table: QTableWidget) -> QFrame:
     The card owns the border/radius while the QTableWidget stays borderless.
     This prevents table/header borders from spilling outside the card.
     """
-    card = QFrame()
+    card = _RoundedTableCard()
     card.setObjectName("TableCard")
-    card.setStyleSheet("""
-        QFrame#TableCard {
-            background: #0f172a;
-            border: 1px solid #26334d;
-            border-radius: 12px;
-        }
-    """)
+    card.setAttribute(Qt.WA_StyledBackground, True)
+    card.setStyleSheet(_table_card_qss())
     lay = QVBoxLayout(card)
-    lay.setContentsMargins(2, 2, 2, 7)
+    # Keep the table flush so the header merges into the body.
+    # The table itself now draws the visible rounded border.
+    lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(0)
     lay.addWidget(table, 1)
     return card
@@ -133,7 +224,7 @@ def _info_strip(text: str) -> QFrame:
     lay.setSpacing(8)
 
     icon = QLabel("ℹ")
-    icon.setStyleSheet("color:#22d3ee;font-weight:900;")
+    icon.setStyleSheet(_info_icon_qss())
     msg = QLabel(text)
     msg.setObjectName("InfoText")
 
@@ -155,7 +246,7 @@ class CreateUserDialog(QDialog):
         root.setSpacing(10)
 
         title = QLabel("Create New Staff Account")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #f8fafc;")
+        title.setStyleSheet(_dialog_title_qss(18))
         root.addWidget(title)
 
         self.username = QLineEdit()
@@ -184,7 +275,7 @@ class CreateUserDialog(QDialog):
         self.active = QCheckBox("Account active")
         self.active.setChecked(True)
         self.active.setToolTip("Disable this if the account should be created but not allowed to log in yet.")
-        self.active.setStyleSheet("color: #cbd5e1;")
+        set_tone(self.active, "#cbd5e1")
 
         for label, widget in [
             ("Username", self.username),
@@ -240,7 +331,7 @@ class ResetPasswordDialog(QDialog):
         root.setSpacing(10)
 
         title = QLabel(f"Reset Password for {username}")
-        title.setStyleSheet("font-size: 17px; font-weight: 800; color: #f8fafc;")
+        title.setStyleSheet(_dialog_title_qss(17))
         root.addWidget(title)
 
         self.password = QLineEdit()
@@ -291,7 +382,7 @@ class WorkstationNotesDialog(QDialog):
         root.setSpacing(10)
 
         title = QLabel(f"Notes for {hostname}")
-        title.setStyleSheet("font-size: 17px; font-weight: 800; color: #f8fafc;")
+        title.setStyleSheet(_dialog_title_qss(17))
         root.addWidget(title)
 
         self.notes = QPlainTextEdit()
@@ -325,6 +416,31 @@ class AdminManagementPage(QWidget):
         self._refresh_users()
         self._refresh_workstations()
         self._update_permissions()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_theme_styles()
+
+    def _apply_theme_styles(self) -> None:
+        """Re-apply page-local styles after live Light/Dark theme changes."""
+        try:
+            self.setStyleSheet(_page_qss())
+            if hasattr(self, "_header_title_label"):
+                self._header_title_label.setStyleSheet(_header_title_qss())
+            if hasattr(self, "_header_subtitle_label"):
+                self._header_subtitle_label.setStyleSheet(_header_subtitle_qss())
+            if hasattr(self, "tabs"):
+                self.tabs.setStyleSheet(_tabs_qss())
+            for table in (getattr(self, "users_table", None), getattr(self, "ws_table", None)):
+                if table is not None:
+                    table.setStyleSheet(_table_qss())
+                    parent = table.parentWidget()
+                    if parent is not None and parent.objectName() == "TableCard":
+                        parent.setStyleSheet(_table_card_qss())
+            if hasattr(self, "_role_badge"):
+                self._role_badge.setStyleSheet(_access_badge_qss() if self._is_admin() else _view_only_badge_qss())
+        except Exception:
+            pass
 
     def _is_admin(self) -> bool:
         """Return True only for admin/supervisor roles.
@@ -373,9 +489,13 @@ class AdminManagementPage(QWidget):
         title_box.setSpacing(2)
 
         title = QLabel("Admin Management")
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: #f8fafc;")
+        title.setObjectName("AdminPageTitle")
+        title.setStyleSheet(_header_title_qss())
         subtitle = QLabel("Manage RAMDetect staff accounts and registered PTM workstations")
-        subtitle.setStyleSheet("font-size: 12px; color: #9fb0cc;")
+        subtitle.setObjectName("AdminPageSubtitle")
+        subtitle.setStyleSheet(_header_subtitle_qss())
+        self._header_title_label = title
+        self._header_subtitle_label = subtitle
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         h.addLayout(title_box, 1)
@@ -384,15 +504,7 @@ class AdminManagementPage(QWidget):
         self._role_badge.setAlignment(Qt.AlignCenter)
         self._role_badge.setMinimumHeight(42)
         self._role_badge.setMinimumWidth(150)
-        self._role_badge.setStyleSheet(
-            "background:#052e1a;"
-            "color:#22c55e;"
-            "border:1px solid #166534;"
-            "border-radius:12px;"
-            "padding:8px 14px;"
-            "font-size:12px;"
-            "font-weight:800;"
-        )
+        self._role_badge.setStyleSheet(_access_badge_qss())
         h.addWidget(self._role_badge)
         root.addWidget(header)
 
@@ -439,7 +551,7 @@ class AdminManagementPage(QWidget):
         self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.users_table.setSelectionMode(QTableWidget.SingleSelection)
         self.users_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.users_table.setAlternatingRowColors(True)
+        self.users_table.setAlternatingRowColors(False)
         self.users_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.users_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.users_table.setFrameShape(QFrame.NoFrame)
@@ -509,7 +621,7 @@ class AdminManagementPage(QWidget):
         self.ws_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ws_table.setSelectionMode(QTableWidget.SingleSelection)
         self.ws_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.ws_table.setAlternatingRowColors(True)
+        self.ws_table.setAlternatingRowColors(False)
         self.ws_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.ws_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.ws_table.setFrameShape(QFrame.NoFrame)
@@ -558,26 +670,10 @@ class AdminManagementPage(QWidget):
 
         if is_admin:
             self._role_badge.setText("●  Admin Access")
-            self._role_badge.setStyleSheet(
-                "background:#052e1a;"
-                "color:#22c55e;"
-                "border:1px solid #166534;"
-                "border-radius:12px;"
-                "padding:8px 14px;"
-                "font-size:12px;"
-                "font-weight:800;"
-            )
+            self._role_badge.setStyleSheet(_access_badge_qss())
         else:
             self._role_badge.setText("View only")
-            self._role_badge.setStyleSheet(
-                "background:#2b1518;"
-                "color:#fecaca;"
-                "border:1px solid #7f1d1d;"
-                "border-radius:12px;"
-                "padding:8px 14px;"
-                "font-size:12px;"
-                "font-weight:800;"
-            )
+            self._role_badge.setStyleSheet(_view_only_badge_qss())
 
     def _refresh_users(self) -> None:
         try:
@@ -587,11 +683,11 @@ class AdminManagementPage(QWidget):
 
             for row, u in enumerate(self._users):
                 self.users_table.insertRow(row)
-                status_col = "#22c55e" if u["is_active"] else "#ef4444"
+                status_col = _admin_active_text() if u["is_active"] else _admin_danger_text()
                 self.users_table.setItem(row, 0, _item(u["id"]))
                 self.users_table.setItem(row, 1, _item(u["username"], bold=True))
                 self.users_table.setItem(row, 2, _item(u["full_name"]))
-                self.users_table.setItem(row, 3, _item(u["role"], "#06b6d4", True))
+                self.users_table.setItem(row, 3, _item(u["role"], _admin_role_text(), True))
                 self.users_table.setItem(row, 4, _item(u["status"], status_col, True))
                 self.users_table.setItem(row, 5, _item(u["last_login_at"]))
                 self.users_table.setItem(row, 6, _item(u["created_at"]))
@@ -614,7 +710,7 @@ class AdminManagementPage(QWidget):
             for row, ws in enumerate(self._workstations):
                 self.ws_table.insertRow(row)
                 status = ws["status"]
-                color = "#ef4444" if status == "Blocked" else ("#22c55e" if status == "Trusted" else "#f59e0b")
+                color = _admin_danger_text() if status == "Blocked" else (_admin_active_text() if status == "Trusted" else _admin_warning_text())
                 self.ws_table.setItem(row, 0, _item(ws["id"]))
                 self.ws_table.setItem(row, 1, _item(status, color, True))
                 self.ws_table.setItem(row, 2, _item(ws["hostname"], bold=True))
@@ -756,341 +852,332 @@ class AdminManagementPage(QWidget):
             QMessageBox.warning(self, "Workstation Notes", str(exc))
 
 
-def _page_qss() -> str:
+
+def _active_theme() -> str:
+    try:
+        from ui.theme import current_theme
+    except Exception:
+        try:
+            from ramdetect.ui.theme import current_theme
+        except Exception:
+            return "dark"
+    try:
+        return "light" if str(current_theme()).strip().lower() == "light" else "dark"
+    except Exception:
+        return "dark"
+
+
+def _is_light() -> bool:
+    return _active_theme() == "light"
+
+
+def _header_title_qss() -> str:
+    if _is_light():
+        return "font-size:22px;font-weight:800;color:#123b7a;background:transparent;border:none;"
+    return "font-size:22px;font-weight:800;color:#ffffff;background:transparent;border:none;"
+
+
+def _header_subtitle_qss() -> str:
+    if _is_light():
+        return "font-size:12px;color:#5570a9;background:transparent;border:none;"
+    return "font-size:12px;color:#9fb0cc;background:transparent;border:none;"
+
+
+def _dialog_title_qss(size: int = 17) -> str:
+    colour = "#123b7a" if _is_light() else "#f8fafc"
+    return f"font-size:{size}px;font-weight:800;color:{colour};background:transparent;border:none;"
+
+
+def _access_badge_qss() -> str:
+    if _is_light():
+        return (
+            "background:#ecfdf5;color:#047857;border:1px solid #86efac;"
+            "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+        )
+    return (
+        "background:#063d24;color:#4ade80;border:1px solid #22c55e;"
+        "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+    )
+
+
+def _view_only_badge_qss() -> str:
+    if _is_light():
+        return (
+            "background:#fff1f2;color:#b91c1c;border:1px solid #fecaca;"
+            "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+        )
+    return (
+        "background:#2b1518;color:#fecaca;border:1px solid #7f1d1d;"
+        "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+    )
+
+
+def _info_icon_qss() -> str:
+    return "color:#1a56db;font-weight:900;background:transparent;border:none;" if _is_light() else "color:#22d3ee;font-weight:900;background:transparent;border:none;"
+
+
+def _admin_table_row_line() -> str:
+    return "#d9e6ff" if _is_light() else "#1e293b"
+
+
+def _admin_table_col_line() -> str:
+    return "#d9e6ff" if _is_light() else "#26334d"
+
+
+def _table_card_qss() -> str:
+    if _is_light():
+        return """
+            QFrame#TableCard {
+                background: #ffffff;
+                border: none;
+                border-radius: 12px;
+            }
+        """
     return """
-        QWidget {
+        QFrame#TableCard {
             background: #0f172a;
-            color: #e2e8f0;
-            font-family: 'Segoe UI';
-        }
-        QFrame#AdminHeader, QFrame#Toolbar {
-            background: #111827;
-            border: 1px solid #26334d;
+            border: none;
             border-radius: 12px;
         }
-        QFrame#InfoStrip {
-            background: rgba(15, 23, 42, 0.58);
-            border: 1px solid rgba(38, 51, 77, 0.90);
-            border-left: 3px solid #06b6d4;
-            border-radius: 9px;
-        }
-        QLabel {
-            background: transparent;
-            border: none;
-            color: #dbeafe;
-        }
-        QLabel#InfoText {
-            color: #94a3b8;
-            font-size: 11px;
-        }
-        QLabel#SummaryText {
-            color: #7f91ad;
-            font-size: 11px;
-            padding-left: 2px;
-        }
-        QLineEdit, QComboBox, QPlainTextEdit {
-            background: #0f172a;
-            color: #e2e8f0;
-            border: 1px solid #334155;
-            border-radius: 8px;
-            padding: 6px 10px;
-            font-size: 12px;
-        }
-        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
-            border: 1px solid #06b6d4;
-        }
-        QPushButton#NeutralButton {
-            background: #334155;
-            color: #f8fafc;
-            border: 1px solid #475569;
-            border-radius: 8px;
-            padding: 6px 12px;
-            font-size: 11px;
-            font-weight: 700;
-            min-height: 30px;
-        }
-        QPushButton#NeutralButton:hover {
-            background: #475569;
-            border-color: #06b6d4;
-        }
-        QPushButton#NeutralButton:disabled {
-            background: #1e293b;
-            color: #64748b;
-            border-color: #334155;
-        }
-        QMessageBox {
-            background: #111827;
-            color: #e2e8f0;
-        }
-        QMessageBox QLabel {
-            color: #e2e8f0;
-        }
-        QMessageBox QPushButton {
-            background: #334155;
-            color: #ffffff;
-            border: 1px solid #475569;
-            border-radius: 7px;
-            padding: 6px 18px;
-            min-width: 72px;
-            font-weight: 700;
-        }
-        QMessageBox QPushButton:hover {
-            border: 1px solid #06b6d4;
-            background: #475569;
-        }
-        QScrollBar:horizontal {
-            background: #0b1220;
-            height: 7px;
-            margin: 0px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:horizontal {
-            background: #475569;
-            min-width: 28px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:horizontal:hover {
-            background: #64748b;
-        }
-        QScrollBar::add-line:horizontal,
-        QScrollBar::sub-line:horizontal {
-            width: 0px;
-            background: transparent;
-        }
-        QScrollBar::add-page:horizontal,
-        QScrollBar::sub-page:horizontal {
-            background: #0b1220;
-            border-radius: 4px;
-        }
-        QScrollBar:vertical {
-            background: #0b1220;
-            width: 7px;
-            margin: 0px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:vertical {
-            background: #475569;
-            min-height: 28px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #64748b;
-        }
-        QScrollBar::add-line:vertical,
-        QScrollBar::sub-line:vertical {
-            height: 0px;
-            background: transparent;
-        }
-        QScrollBar::add-page:vertical,
-        QScrollBar::sub-page:vertical {
-            background: #0b1220;
-            border-radius: 4px;
-        }
     """
+
+
+def _page_qss() -> str:
+    if _is_light():
+        return """
+            QWidget {
+                background: #f0f5ff;
+                color: #1e3a6e;
+                font-family: 'Segoe UI';
+            }
+            QFrame#AdminHeader, QFrame#Toolbar {
+                background: #ffffff;
+                border: 1px solid #cfe0ff;
+                border-radius: 12px;
+            }
+            QFrame#InfoStrip {
+                background: #f8fbff;
+                border: 1px solid #cfe0ff;
+                border-left: 3px solid #1a56db;
+                border-radius: 9px;
+            }
+            QLabel { background: transparent; border: none; color: #1e3a6e; }
+            QLabel#InfoText { color: #6f83b5; font-size: 11px; }
+            QLabel#SummaryText { color: #7b8fb8; font-size: 11px; padding-left: 2px; }
+            QLineEdit, QComboBox, QPlainTextEdit {
+                background: #ffffff;
+                color: #1e3a6e;
+                border: 1px solid #c7d9fb;
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid #1a56db; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #1e3a6e;
+                border: 1px solid #cfe0ff;
+                selection-background-color: #dbeafe;
+                selection-color: #1a56db;
+            }
+            QPushButton#NeutralButton {
+                background: #f8fbff;
+                color: #1e3a6e;
+                border: 1px solid #cfe0ff;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 700;
+                min-height: 30px;
+            }
+            QPushButton#NeutralButton:hover { background: #eaf1ff; border-color: #1a56db; color: #1a56db; }
+            QPushButton#NeutralButton:disabled { background: #eef4ff; color: #9aa8c3; border-color: #d9e6ff; }
+            QMessageBox { background: #ffffff; color: #1e3a6e; }
+            QMessageBox QLabel { color: #1e3a6e; }
+            QMessageBox QPushButton {
+                background: #1a56db;
+                color: #ffffff;
+                border: 1px solid #1a56db;
+                border-radius: 7px;
+                padding: 6px 18px;
+                min-width: 72px;
+                font-weight: 700;
+            }
+            QMessageBox QPushButton:hover { background: #174bbf; border-color: #174bbf; }
+            QScrollBar:horizontal { background: #eef4ff; height: 7px; margin: 0px; border-radius: 4px; }
+            QScrollBar::handle:horizontal { background: #9fb7e5; min-width: 28px; border-radius: 4px; }
+            QScrollBar::handle:horizontal:hover { background: #6f8fd3; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: #eef4ff; border-radius: 4px; }
+            QScrollBar:vertical { background: #eef4ff; width: 7px; margin: 0px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #9fb7e5; min-height: 28px; border-radius: 4px; }
+            QScrollBar::handle:vertical:hover { background: #6f8fd3; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #eef4ff; border-radius: 4px; }
+        """
+    return """
+        QWidget { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI'; }
+        QFrame#AdminHeader, QFrame#Toolbar { background: #111827; border: 1px solid #26334d; border-radius: 12px; }
+        QFrame#InfoStrip { background: rgba(15, 23, 42, 0.58); border: 1px solid rgba(38, 51, 77, 0.90); border-left: 3px solid #06b6d4; border-radius: 9px; }
+        QLabel { background: transparent; border: none; color: #dbeafe; }
+        QLabel#InfoText { color: #94a3b8; font-size: 11px; }
+        QLabel#SummaryText { color: #7f91ad; font-size: 11px; padding-left: 2px; }
+        QLineEdit, QComboBox, QPlainTextEdit { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid #06b6d4; }
+        QPushButton#NeutralButton { background: #334155; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 700; min-height: 30px; }
+        QPushButton#NeutralButton:hover { background: #475569; border-color: #06b6d4; }
+        QPushButton#NeutralButton:disabled { background: #1e293b; color: #64748b; border-color: #334155; }
+        QMessageBox { background: #111827; color: #e2e8f0; }
+        QMessageBox QLabel { color: #e2e8f0; }
+        QMessageBox QPushButton { background: #334155; color: #ffffff; border: 1px solid #475569; border-radius: 7px; padding: 6px 18px; min-width: 72px; font-weight: 700; }
+        QMessageBox QPushButton:hover { border: 1px solid #06b6d4; background: #475569; }
+        QScrollBar:horizontal { background: #0b1220; height: 7px; margin: 0px; border-radius: 4px; }
+        QScrollBar::handle:horizontal { background: #475569; min-width: 28px; border-radius: 4px; }
+        QScrollBar::handle:horizontal:hover { background: #64748b; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: #0b1220; border-radius: 4px; }
+        QScrollBar:vertical { background: #0b1220; width: 7px; margin: 0px; border-radius: 4px; }
+        QScrollBar::handle:vertical { background: #475569; min-height: 28px; border-radius: 4px; }
+        QScrollBar::handle:vertical:hover { background: #64748b; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #0b1220; border-radius: 4px; }
+    """
+
 
 def _tabs_qss() -> str:
+    if _is_light():
+        return """
+            QTabWidget { background: transparent; border: none; }
+            QTabWidget::pane { border: none; background: transparent; margin-top: 8px; }
+            QTabWidget > QWidget { background: transparent; }
+            QTabBar { background: transparent; }
+            QTabBar::tab {
+                background: #ffffff;
+                color: #5570a9;
+                border: 1px solid #cfe0ff;
+                padding: 7px 12px;
+                margin-right: 6px;
+                border-radius: 8px;
+                font-size: 11px;
+                font-weight: 700;
+                min-width: 104px;
+            }
+            QTabBar::tab:selected { background: #1a56db; color: #ffffff; border-color: #1a56db; }
+            QTabBar::tab:hover:!selected { background: #eaf1ff; color: #1a56db; border-color: #1a56db; }
+        """
     return """
-        QTabWidget {
-            background: transparent;
-            border: none;
-        }
-        QTabWidget::pane {
-            border: none;
-            background: transparent;
-            margin-top: 8px;
-        }
-        QTabWidget > QWidget {
-            background: transparent;
-        }
-        QTabBar {
-            background: transparent;
-        }
-        QTabBar::tab {
-            background: #172033;
-            color: #9fb0cc;
-            border: 1px solid #26334d;
-            padding: 7px 12px;
-            margin-right: 6px;
-            border-radius: 8px;
-            font-size: 11px;
-            font-weight: 700;
-            min-width: 104px;
-        }
-        QTabBar::tab:selected {
-            background: #075985;
-            color: #ffffff;
-            border-color: #06b6d4;
-            border-bottom: 2px solid #22d3ee;
-        }
-        QTabBar::tab:hover:!selected {
-            background: #1e293b;
-            color: #dbeafe;
-            border-color: #334155;
-        }
+        QTabWidget { background: transparent; border: none; }
+        QTabWidget::pane { border: none; background: transparent; margin-top: 8px; }
+        QTabWidget > QWidget { background: transparent; }
+        QTabBar { background: transparent; }
+        QTabBar::tab { background: #172033; color: #9fb0cc; border: 1px solid #26334d; padding: 7px 12px; margin-right: 6px; border-radius: 8px; font-size: 11px; font-weight: 700; min-width: 104px; }
+        QTabBar::tab:selected { background: #075985; color: #ffffff; border-color: #06b6d4; border-bottom: 2px solid #22d3ee; }
+        QTabBar::tab:hover:!selected { background: #1e293b; color: #dbeafe; border-color: #334155; }
     """
+
 
 def _table_qss() -> str:
+    if _is_light():
+        return """
+            QTableWidget {
+                background: #ffffff;
+                alternate-background-color: #ffffff;
+                color: #1e3a6e;
+                border: 2px solid #9fbef2;
+                border-radius: 12px;
+                gridline-color: transparent;
+                font-size: 11px;
+                selection-background-color: #c7dcff;
+                selection-color: #0f3473;
+            }
+            QTableWidget::viewport { background: #ffffff; border: none; }
+            QTableWidget::item { padding: 3px 8px; border: none; }
+            QTableWidget::item:selected { background: #c7dcff; color: #0f3473; border: none; }
+            QTableWidget::item:focus { outline: none; border: none; }
+            QHeaderView { background: #eaf1ff; border: none; }
+            QHeaderView::section {
+                background: #eaf1ff;
+                color: #5570a9;
+                border: none;
+                border-right: 1px solid #d4e3ff;
+                border-bottom: 1px solid #b8cff8;
+                padding: 8px 10px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QHeaderView::section:hover { background: #dbeafe; color: #1a56db; }
+            QTableCornerButton::section { background: #eaf1ff; border: none; border-bottom: 1px solid #b8cff8; }
+            QScrollBar:horizontal { background: #eef4ff; height: 8px; margin: 0px 2px 2px 2px; border-radius: 4px; }
+            QScrollBar::handle:horizontal { background: #8faee6; min-width: 28px; border-radius: 4px; }
+            QScrollBar::handle:horizontal:hover { background: #6f8fd3; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: #eef4ff; border-radius: 4px; }
+            QScrollBar:vertical { background: #eef4ff; width: 8px; margin: 2px 2px 2px 0px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #8faee6; min-height: 28px; border-radius: 4px; }
+            QScrollBar::handle:vertical:hover { background: #6f8fd3; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #eef4ff; border-radius: 4px; }
+        """
     return """
-        QTableWidget {
-            background: transparent;
-            alternate-background-color: #111c2e;
-            color: #dbeafe;
-            border: none;
-            border-radius: 0px;
-            gridline-color: transparent;
-            font-size: 11px;
-            selection-background-color: #0e7490;
-            selection-color: white;
-        }
-        QTableWidget::viewport {
-            background: #0f172a;
-            border: none;
-        }
-        QTableWidget::item {
-            padding: 3px 8px;
-            border: none;
-        }
-        QTableWidget::item:selected {
-            background: #0e7490;
-            color: #ffffff;
-            border: none;
-        }
-        QTableWidget::item:focus {
-            outline: none;
-            border: none;
-        }
-        QHeaderView {
-            background: transparent;
-            border: none;
-        }
-        QHeaderView::section {
-            background: #0b1220;
-            color: #cbd5e1;
-            border: none;
-            border-right: none;
-            border-bottom: 1px solid #26334d;
-            padding: 8px 10px;
-            font-size: 11px;
-            font-weight: 800;
-        }
-        QTableCornerButton::section {
-            background: #0b1220;
-            border: none;
-            border-bottom: 1px solid #26334d;
-            border-right: none;
-        }
-        QScrollBar:horizontal {
-            background: #0b1220;
-            height: 7px;
-            margin: 0px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:horizontal {
-            background: #475569;
-            min-width: 28px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:horizontal:hover {
-            background: #64748b;
-        }
-        QScrollBar::add-line:horizontal,
-        QScrollBar::sub-line:horizontal {
-            width: 0px;
-            background: transparent;
-        }
-        QScrollBar::add-page:horizontal,
-        QScrollBar::sub-page:horizontal {
-            background: #0b1220;
-            border-radius: 4px;
-        }
-        QScrollBar:vertical {
-            background: #0b1220;
-            width: 7px;
-            margin: 0px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:vertical {
-            background: #475569;
-            min-height: 28px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #64748b;
-        }
-        QScrollBar::add-line:vertical,
-        QScrollBar::sub-line:vertical {
-            height: 0px;
-            background: transparent;
-        }
-        QScrollBar::add-page:vertical,
-        QScrollBar::sub-page:vertical {
-            background: #0b1220;
-            border-radius: 4px;
-        }
+        QTableWidget { background: #0f172a; alternate-background-color: #0f172a; color: #dbeafe; border: 2px solid #40506f; border-radius: 12px; gridline-color: transparent; font-size: 11px; selection-background-color: #164e63; selection-color: #ffffff; }
+        QTableWidget::viewport { background: #0f172a; border: none; }
+        QTableWidget::item { padding: 3px 8px; border: none; }
+        QTableWidget::item:selected { background: #164e63; color: #ffffff; border: none; }
+        QTableWidget::item:focus { outline: none; border: none; }
+        QHeaderView { background: #0b1220; border: none; }
+        QHeaderView::section { background: #0b1220; color: #dbeafe; border: none; border-right: 1px solid #26334d; border-bottom: 1px solid #34435f; padding: 8px 10px; font-size: 11px; font-weight: 800; }
+        QTableCornerButton::section { background: #0b1220; border: none; border-bottom: 1px solid #34435f; border-right: 1px solid #26334d; }
+        QScrollBar:horizontal { background: #0b1220; height: 8px; margin: 0px 2px 2px 2px; border-radius: 4px; }
+        QScrollBar::handle:horizontal { background: #475569; min-width: 28px; border-radius: 4px; }
+        QScrollBar::handle:horizontal:hover { background: #64748b; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: #0b1220; border-radius: 4px; }
+        QScrollBar:vertical { background: #0b1220; width: 8px; margin: 2px 2px 2px 0px; border-radius: 4px; }
+        QScrollBar::handle:vertical { background: #475569; min-height: 28px; border-radius: 4px; }
+        QScrollBar::handle:vertical:hover { background: #64748b; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #0b1220; border-radius: 4px; }
     """
+
 
 def _dialog_qss() -> str:
+    if _is_light():
+        return _page_qss() + """
+            QDialog { background: #ffffff; }
+            QDialog QPushButton, QDialogButtonBox QPushButton {
+                background: #f8fbff;
+                color: #1e3a6e;
+                border: 1px solid #cfe0ff;
+                border-radius: 8px;
+                padding: 7px 18px;
+                min-width: 80px;
+                min-height: 30px;
+                font-size: 12px;
+                font-weight: 800;
+            }
+            QDialog QPushButton:hover, QDialogButtonBox QPushButton:hover {
+                background: #eaf1ff;
+                border: 1px solid #1a56db;
+                color: #1a56db;
+            }
+            QDialog QPushButton:pressed, QDialogButtonBox QPushButton:pressed {
+                background: #dbeafe;
+                border: 1px solid #174bbf;
+            }
+            QCheckBox { color: #1e3a6e; spacing: 8px; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #9fb7e5; background: #ffffff; }
+            QCheckBox::indicator:checked { background: #1a56db; border: 1px solid #1a56db; }
+            QToolTip { background: #ffffff; color: #1e3a6e; border: 1px solid #9fb7e5; border-radius: 6px; padding: 6px; font-size: 11px; }
+        """
     return _page_qss() + """
-        QDialog {
-            background: #0f172a;
-        }
-        QDialog QPushButton {
-            background: #1e293b;
-            color: #f8fafc;
-            border: 1px solid #475569;
-            border-radius: 8px;
-            padding: 7px 18px;
-            min-width: 80px;
-            min-height: 30px;
-            font-size: 12px;
-            font-weight: 800;
-        }
-        QDialog QPushButton:hover {
-            background: #334155;
-            border: 1px solid #06b6d4;
-            color: #ffffff;
-        }
-        QDialog QPushButton:pressed {
-            background: #075985;
-            border: 1px solid #22d3ee;
-        }
-        QDialogButtonBox QPushButton {
-            background: #1e293b;
-            color: #f8fafc;
-            border: 1px solid #475569;
-            border-radius: 8px;
-            padding: 7px 18px;
-            min-width: 80px;
-            min-height: 30px;
-            font-size: 12px;
-            font-weight: 800;
-        }
-        QDialogButtonBox QPushButton:hover {
-            background: #334155;
-            border: 1px solid #06b6d4;
-        }
-        QCheckBox {
-            color: #cbd5e1;
-            spacing: 8px;
-        }
-        QCheckBox::indicator {
-            width: 18px;
-            height: 18px;
-            border-radius: 4px;
-            border: 1px solid #475569;
-            background: #0f172a;
-        }
-        QCheckBox::indicator:checked {
-            background: #06b6d4;
-            border: 1px solid #22d3ee;
-        }
-        QToolTip {
-            background: #111827;
-            color: #dbeafe;
-            border: 1px solid #06b6d4;
-            border-radius: 6px;
-            padding: 6px;
-            font-size: 11px;
-        }
+        QDialog { background: #0f172a; }
+        QDialog QPushButton { background: #1e293b; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 7px 18px; min-width: 80px; min-height: 30px; font-size: 12px; font-weight: 800; }
+        QDialog QPushButton:hover { background: #334155; border: 1px solid #06b6d4; color: #ffffff; }
+        QDialog QPushButton:pressed { background: #075985; border: 1px solid #22d3ee; }
+        QDialogButtonBox QPushButton { background: #1e293b; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 7px 18px; min-width: 80px; min-height: 30px; font-size: 12px; font-weight: 800; }
+        QDialogButtonBox QPushButton:hover { background: #334155; border: 1px solid #06b6d4; }
+        QCheckBox { color: #cbd5e1; spacing: 8px; }
+        QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; }
+        QCheckBox::indicator:checked { background: #06b6d4; border: 1px solid #22d3ee; }
+        QToolTip { background: #111827; color: #dbeafe; border: 1px solid #06b6d4; border-radius: 6px; padding: 6px; font-size: 11px; }
     """
-

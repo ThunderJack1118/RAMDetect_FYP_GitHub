@@ -14,6 +14,7 @@ from ui.widgets.progress_stepper import ProgressStepper
 from ui.bridge.session           import AppState
 from ui.bridge.config_bridge     import Config
 from ui.bridge.ml_bridge         import MLBridge
+from ui.style_helpers import set_role, set_tone, set_state, set_variant, refresh_style
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ def _lbl(text: str, size: int = 11, bold: bool = False,
          color: str = "#ffffff") -> QLabel:
     w = QLabel(text)
     w.setFont(QFont("Segoe UI", size, QFont.Bold if bold else QFont.Normal))
-    w.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+    set_tone(w, color)
     return w
 
 
@@ -94,6 +95,8 @@ class _ModuleCard(QFrame):
         super().__init__(parent)
         self.key      = meta["key"]
         self.features = meta["features"]
+        self.setFrameShape(QFrame.NoFrame)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setObjectName("moduleCard")
@@ -121,6 +124,8 @@ class _ModuleCard(QFrame):
 
         # ── Col 0, row 0: icon box ────────────────────────────────────────────
         self._icon_box = QWidget()
+        self._icon_box.setObjectName("moduleIconBox")
+        self._icon_box.setAttribute(Qt.WA_StyledBackground, True)
         self._icon_box.setFixedSize(40, 40)
         self._icon_box.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         ib_lay = QHBoxLayout(self._icon_box)
@@ -146,6 +151,7 @@ class _ModuleCard(QFrame):
 
         # ── Col 2, row 0 only: checkmark, anchored top-right ─────────────────
         self._check_lbl = QLabel("✓")
+        self._check_lbl.setObjectName("moduleCheck")
         self._check_lbl.setFixedSize(26, 26)
         self._check_lbl.setAlignment(Qt.AlignCenter)
         self._check_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
@@ -155,52 +161,14 @@ class _ModuleCard(QFrame):
 
     # ── Visual state — every child widget styled individually (no cascade) ────
     def _apply(self):
-        if self._selected:
-            self.setStyleSheet(
-                "QFrame#moduleCard {"
-                "  background: rgba(6,182,212,0.07);"
-                "  border: 2px solid #06b6d4;"
-                "  border-radius: 12px;"
-                "}"
-            )
-            self._icon_box.setStyleSheet(
-                "QWidget { background: rgba(6,182,212,0.18); border-radius: 9px; }"
-            )
-            self._icon_lbl.setStyleSheet(
-                "QLabel { background: transparent; color: #06b6d4; border: none; }"
-            )
-            self._title_lbl.setStyleSheet(
-                "QLabel { color: #ffffff; background: transparent; border: none; }"
-            )
-            self._desc_lbl.setStyleSheet(
-                "QLabel { color: #64748b; background: transparent; border: none; }"
-            )
-            self._check_lbl.setStyleSheet(
-                "QLabel { background: rgba(6,182,212,0.20); color: #06b6d4;"
-                "  border-radius: 13px; border: none; }"
-            )
-            self._check_lbl.show()
-        else:
-            self.setStyleSheet(
-                "QFrame#moduleCard {"
-                "  background: rgba(15,25,40,0.55);"
-                "  border: 2px solid #1e3a4a;"
-                "  border-radius: 12px;"
-                "}"
-            )
-            self._icon_box.setStyleSheet(
-                "QWidget { background: rgba(51,65,85,0.45); border-radius: 9px; }"
-            )
-            self._icon_lbl.setStyleSheet(
-                "QLabel { background: transparent; color: #475569; border: none; }"
-            )
-            self._title_lbl.setStyleSheet(
-                "QLabel { color: #94a3b8; background: transparent; border: none; }"
-            )
-            self._desc_lbl.setStyleSheet(
-                "QLabel { color: #475569; background: transparent; border: none; }"
-            )
-            self._check_lbl.hide()
+        state = "selected" if self._selected else "idle"
+        set_state(self, state)
+        set_state(self._icon_box, state)
+        set_state(self._check_lbl, state)
+        set_tone(self._icon_lbl, "#06b6d4" if self._selected else "#475569")
+        set_tone(self._title_lbl, "#ffffff" if self._selected else "#94a3b8")
+        set_tone(self._desc_lbl, "#64748b" if self._selected else "#475569")
+        self._check_lbl.setVisible(self._selected)
 
     def toggle(self):
         self._selected = not self._selected
@@ -231,8 +199,10 @@ class _ModuleCard(QFrame):
 class AnalysisConfigPage(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.setObjectName("AnalysisConfigPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.mw = main_window
-        self.setStyleSheet("background: transparent;")
+        set_role(self, "transparent")
         self._module_cards: list[_ModuleCard] = []
 
         root = QVBoxLayout(self)
@@ -270,13 +240,7 @@ class AnalysisConfigPage(QWidget):
         # QWidget (not QFrame) — stylesheet is scoped, nothing cascades down
         warn = QWidget()
         warn.setObjectName("warnBanner")
-        warn.setStyleSheet(
-            "QWidget#warnBanner {"
-            "  background: rgba(250,204,21,0.07);"
-            "  border: 1px solid rgba(250,204,21,0.3);"
-            "  border-radius: 10px;"
-            "}"
-        )
+        warn.setAttribute(Qt.WA_StyledBackground, True)
         row = QHBoxLayout(warn)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(10)
@@ -299,14 +263,8 @@ class AnalysisConfigPage(QWidget):
         # QWidget with objectName — border stays on this widget only
         card = QWidget()
         card.setObjectName("modulesCard")
+        card.setAttribute(Qt.WA_StyledBackground, True)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        card.setStyleSheet(
-            "QWidget#modulesCard {"
-            "  background: rgba(30,41,59,0.45);"
-            "  border: 1px solid rgba(51,65,85,0.5);"
-            "  border-radius: 12px;"
-            "}"
-        )
 
         vb = QVBoxLayout(card)
         vb.setContentsMargins(24, 20, 24, 20)
@@ -321,21 +279,14 @@ class AnalysisConfigPage(QWidget):
 
         sel_all = QPushButton("Select All")
         sel_all.setFont(QFont("Segoe UI", 11))
-        sel_all.setStyleSheet(
-            "QPushButton { background: transparent; color: #06b6d4;"
-            "  border: none; padding: 4px 8px; }"
-            "QPushButton:hover { color: #38bdf8; }"
-        )
+        sel_all.setObjectName("linkBtn")
         sel_all.clicked.connect(self._select_all)
         hdr_row.addWidget(sel_all)
 
         clr_all = QPushButton("Clear All")
         clr_all.setFont(QFont("Segoe UI", 11))
-        clr_all.setStyleSheet(
-            "QPushButton { background: transparent; color: #64748b;"
-            "  border: none; padding: 4px 8px; }"
-            "QPushButton:hover { color: #f87171; }"
-        )
+        clr_all.setObjectName("linkBtn")
+        set_tone(clr_all, "#64748b")
         clr_all.clicked.connect(self._clear_all)
         hdr_row.addWidget(clr_all)
 
@@ -372,15 +323,9 @@ class AnalysisConfigPage(QWidget):
         """
         bar = QWidget()
         bar.setObjectName("summaryBar")
+        bar.setAttribute(Qt.WA_StyledBackground, True)
         bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         bar.setFixedHeight(104)
-        bar.setStyleSheet(
-            "QWidget#summaryBar {"
-            "  background: rgba(30,41,59,0.45);"
-            "  border: 1px solid rgba(51,65,85,0.5);"
-            "  border-radius: 12px;"
-            "}"
-        )
 
         row = QHBoxLayout(bar)
         row.setContentsMargins(18, 12, 18, 12)
@@ -390,16 +335,11 @@ class AnalysisConfigPage(QWidget):
                         min_width: int = 135) -> QFrame:
             card = QFrame()
             card.setObjectName("summaryMetricCard")
+            card.setFrameShape(QFrame.NoFrame)
+            card.setAttribute(Qt.WA_StyledBackground, True)
             card.setFixedHeight(76)
             card.setMinimumWidth(min_width)
             card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            card.setStyleSheet(
-                "QFrame#summaryMetricCard {"
-                "  background: rgba(15,23,42,0.42);"
-                "  border: 1px solid rgba(51,65,85,0.55);"
-                "  border-radius: 10px;"
-                "}"
-            )
             vb = QVBoxLayout(card)
             vb.setContentsMargins(14, 9, 14, 9)
             vb.setSpacing(2)
@@ -419,16 +359,11 @@ class AnalysisConfigPage(QWidget):
         # ML pipeline card
         model_card = QFrame()
         model_card.setObjectName("summaryModelCard")
+        model_card.setFrameShape(QFrame.NoFrame)
+        model_card.setAttribute(Qt.WA_StyledBackground, True)
         model_card.setFixedHeight(76)
-        model_card.setMinimumWidth(500)
+        model_card.setMinimumWidth(360)
         model_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        model_card.setStyleSheet(
-            "QFrame#summaryModelCard {"
-            "  background: rgba(15,23,42,0.42);"
-            "  border: 1px solid rgba(51,65,85,0.55);"
-            "  border-radius: 10px;"
-            "}"
-        )
         mv = QVBoxLayout(model_card)
         mv.setContentsMargins(14, 8, 14, 8)
         mv.setSpacing(3)
@@ -465,27 +400,18 @@ class AnalysisConfigPage(QWidget):
 
         # Zero-selection warning
         self._zero_warn = _lbl("⚠  Select at least one module", 10, color="#f87171")
+        self._zero_warn.setFixedWidth(220)
+        self._zero_warn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._zero_warn.setStyleSheet("background: transparent; border: none;")
         self._zero_warn.hide()
-        row.addWidget(self._zero_warn)
+        row.addWidget(self._zero_warn, alignment=Qt.AlignVCenter)
 
         # Start Analysis button
         self.start_btn = QPushButton("▶  Start Analysis  ›")
         self.start_btn.setObjectName("primaryBtn")
         self.start_btn.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
         self.start_btn.setFixedSize(230, 58)
-        self.start_btn.setStyleSheet(
-            "QPushButton#primaryBtn {"
-            "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "    stop:0 #06b6d4, stop:1 #2563eb);"
-            "  color: #ffffff; border: none;"
-            "  border-radius: 11px; padding: 0 24px; font-weight: 700;"
-            "}"
-            "QPushButton#primaryBtn:hover {"
-            "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "    stop:0 #0891b2, stop:1 #1d4ed8);"
-            "}"
-            "QPushButton#primaryBtn:disabled { background: #334155; color: #64748b; }"
-        )
+        set_variant(self.start_btn, "primary")
         self.start_btn.clicked.connect(self._start_analysis)
         row.addWidget(self.start_btn)
 
@@ -509,17 +435,11 @@ class AnalysisConfigPage(QWidget):
             )
             self._model_warn.show()
             self._model_lbl.setText("Hybrid  (mock mode)")
-            self._model_lbl.setStyleSheet(
-                "color: #94a3b8; background: transparent; border: none;"
-                "font-size: 11px; font-weight: 700;"
-            )
+            set_tone(self._model_lbl, "#94a3b8")
         else:
             self._model_warn.hide()
             self._model_lbl.setText("Hybrid (RF + Autoencoder)")
-            self._model_lbl.setStyleSheet(
-                "color: #a78bfa; background: transparent; border: none;"
-                "font-size: 11px; font-weight: 700;"
-            )
+            set_tone(self._model_lbl, "#a78bfa")
 
     def _refresh_module_selection(self):
         sess = AppState.current
@@ -542,9 +462,7 @@ class AnalysisConfigPage(QWidget):
         self.start_btn.setEnabled(enabled)
         self._zero_warn.setVisible(not enabled)
         color = "#06b6d4" if enabled else "#f87171"
-        self._count_val.setStyleSheet(
-            f"color: {color}; background: transparent; border: none;"
-        )
+        set_tone(self._count_val, color)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Actions
@@ -579,5 +497,5 @@ class AnalysisConfigPage(QWidget):
 def _vdiv() -> QWidget:
     d = QWidget()
     d.setFixedSize(1, 38)
-    d.setStyleSheet("QWidget { background: rgba(51,65,85,0.6); border: none; }")
+    set_role(d, "vdiv")
     return d

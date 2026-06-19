@@ -30,7 +30,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QPushButton, QProgressBar,
-    QTextEdit, QScrollArea,
+    QTextEdit, QScrollArea, QGraphicsOpacityEffect,
 )
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui  import QFont
@@ -38,6 +38,8 @@ from PyQt5.QtGui  import QFont
 from ui.widgets.header_bar import HeaderBar
 from ui.widgets.progress_stepper import ProgressStepper
 from ui.bridge               import AnalysisWorker, PHASE_MAP, AppState
+from ui.style_helpers import set_role, set_tone, refresh_style
+from ui.theme import current_theme
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,11 +48,222 @@ from ui.bridge               import AnalysisWorker, PHASE_MAP, AppState
 
 def _card() -> QFrame:
     f = QFrame()
-    f.setStyleSheet(
-        "QFrame { background: rgba(30,41,59,0.45);"
+    f.setObjectName("RealtimePanelCard")
+    f.setAttribute(Qt.WA_StyledBackground, True)
+    # Scope the style to this card only.  QLabel also inherits QFrame in Qt,
+    # so a generic "QFrame { ... }" selector creates unwanted borders around
+    # labels/progress text inside the card.
+    f.setStyleSheet(_realtime_panel_qss())
+    return f
+
+
+def _theme_name() -> str:
+    return "light" if str(current_theme()).strip().lower() == "light" else "dark"
+
+
+def _is_light() -> bool:
+    return _theme_name() == "light"
+
+
+def _map_color(color: str) -> str:
+    """Map old dark-page colours to readable light-theme equivalents."""
+    if not _is_light():
+        return color
+    c = (color or "").strip().lower().replace(" ", "")
+    mapping = {
+        "#ffffff": "#1e3a6e",
+        "white": "#1e3a6e",
+        "#e2e8f0": "#1e3a6e",
+        "#cbd5e1": "#2f4f85",
+        "#94a3b8": "#5f75a6",
+        "#64748b": "#7a8cb0",
+        "#475569": "#9aa9c5",
+        "#334155": "#b7c8ee",
+        "#1e293b": "#dbe7ff",
+        "#111827": "#ffffff",
+        "#0f172a": "#f0f5ff",
+    }
+    return mapping.get(c, color)
+
+
+def _plain_style(color: str, size: int | None = None, bold: bool = False) -> str:
+    extra = ""
+    if size is not None:
+        extra += f"font-size:{size}px;"
+    if bold:
+        extra += "font-weight:700;"
+    return f"color:{_map_color(color)}; background: transparent; border: none; border-radius: 0px; {extra}"
+
+
+def _realtime_panel_qss() -> str:
+    if _is_light():
+        return (
+            "QFrame#RealtimePanelCard { background: #ffffff;"
+            "  border: 1px solid #9ec5ff; border-radius: 14px; }"
+        )
+    return (
+        "QFrame#RealtimePanelCard { background: rgba(30,41,59,0.45);"
         "  border: 1px solid rgba(51,65,85,0.5); border-radius: 12px; }"
     )
-    return f
+
+
+def _phase_card_qss(state: str) -> str:
+    state = (state or "pending").lower()
+    if _is_light():
+        styles = {
+            "pending":  ("#ffffff", "#b9d2ff"),
+            "active":   ("#f0fbff", "#1a56db"),
+            "complete": ("#f0fdf7", "#22c55e"),
+            "error":    ("#fff7f7", "#ef4444"),
+        }
+        bg, border = styles.get(state, styles["pending"])
+        return f"QFrame#PhaseCard {{ background: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
+    styles = {
+        "pending":  ("rgba(30,41,59,0.3)", "rgba(51,65,85,0.4)"),
+        "active":   ("rgba(6,182,212,0.05)", "#06b6d4"),
+        "complete": ("rgba(52,211,153,0.05)", "rgba(52,211,153,0.4)"),
+        "error":    ("rgba(248,113,113,0.05)", "rgba(248,113,113,0.4)"),
+    }
+    bg, border = styles.get(state, styles["pending"])
+    return f"QFrame#PhaseCard {{ background: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
+
+
+def _badge_qss(kind: str) -> str:
+    kind = (kind or "pending").lower()
+    if _is_light():
+        styles = {
+            "pending": ("#eef4ff", "#7a8cb0", "#d6e4ff"),
+            "active": ("#e0f2fe", "#1a56db", "#bfdbfe"),
+            "complete": ("#dcfce7", "#16a34a", "#bbf7d0"),
+            "error": ("#fee2e2", "#dc2626", "#fecaca"),
+        }
+        bg, fg, br = styles.get(kind, styles["pending"])
+        return f"background:{bg}; color:{fg}; border:1px solid {br}; border-radius:8px; padding:2px 8px;"
+    styles = {
+        "pending": ("rgba(51,65,85,0.4)", "#64748b", "transparent"),
+        "active": ("rgba(6,182,212,0.15)", "#06b6d4", "transparent"),
+        "complete": ("rgba(52,211,153,0.15)", "#34d399", "transparent"),
+        "error": ("rgba(248,113,113,0.15)", "#f87171", "transparent"),
+    }
+    bg, fg, br = styles.get(kind, styles["pending"])
+    return f"background:{bg}; color:{fg}; border:none; border-radius:8px; padding:2px 8px;"
+
+
+def _theme_is_light(theme: str | None = None) -> bool:
+    return str(theme or current_theme() or "dark").strip().lower() == "light"
+
+
+def _console_header_qss(theme: str | None = None) -> str:
+    if _theme_is_light(theme):
+        border = "#b9d2ff"
+    else:
+        border = "rgba(71,85,105,0.34)"
+    return (
+        "QFrame#ConsoleHeaderBar { background: transparent; border: none; "
+        f"border-bottom: 1px solid {border}; }}"
+    )
+
+
+def _log_badge_qss(theme: str | None = None) -> str:
+    if _theme_is_light(theme):
+        return (
+            "QLabel#RealtimeLineCountBadge { background: #eef4ff; color: #06b6d4; "
+            "border: 1px solid #cfe0ff; border-radius: 8px; padding: 0px 10px; }"
+        )
+    return (
+        "QLabel#RealtimeLineCountBadge { background: rgba(6,182,212,0.10); color: #22d3ee; "
+        "border: 1px solid rgba(6,182,212,0.30); border-radius: 8px; padding: 0px 10px; }"
+    )
+
+
+def _clear_button_qss(theme: str | None = None) -> str:
+    if _theme_is_light(theme):
+        return (
+            "QPushButton#RealtimeClearButton { background: #ffffff; color: #1a56db; "
+            "border: 1px solid #b9d2ff; border-radius: 8px; padding: 0px; font-weight: 800; }"
+            "QPushButton#RealtimeClearButton:hover { background: #eef4ff; border-color: #1a56db; }"
+        )
+    # Match the dark Realtime console reference: dark button shell, not a light badge.
+    return (
+        "QPushButton#RealtimeClearButton { background: #1e293b; color: #f8fafc; "
+        "border: 1px solid rgba(71,85,105,0.78); border-radius: 8px; padding: 0px; font-weight: 800; }"
+        "QPushButton#RealtimeClearButton:hover { background: #263449; color: #ffffff; "
+        "border-color: rgba(6,182,212,0.55); }"
+    )
+
+
+def _progress_bar_qss(kind: str = "overall") -> str:
+    if kind == "activity":
+        chunk = "rgba(26,86,219,0.55)" if _is_light() else "rgba(6,182,212,0.45)"
+        return f"QProgressBar {{ background: transparent; border: none; border-radius: 2px; }} QProgressBar::chunk {{ background: {chunk}; border-radius: 2px; }}"
+    track = "#dbe7ff" if _is_light() else "#1e293b"
+    return (
+        f"QProgressBar {{ background: {track}; border-radius: 4px; border: none; }}"
+        "QProgressBar::chunk { background: qlineargradient("
+        "  x1:0, y1:0, x2:1, y2:0, stop:0 #06b6d4, stop:1 #2563eb);"
+        "  border-radius: 4px; }"
+    )
+
+
+def _local_scrollbar_qss() -> str:
+    if _is_light():
+        return (
+            "QScrollBar:vertical { background: #eef4ff; width: 8px; border-radius: 4px; margin: 0px; }"
+            "QScrollBar::handle:vertical { background: #9fb7e5; border-radius: 4px; min-height: 28px; }"
+            "QScrollBar::handle:vertical:hover { background: #1a56db; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: transparent; }"
+            "QScrollBar:horizontal { background: #eef4ff; height: 8px; border-radius: 4px; margin: 0px; }"
+            "QScrollBar::handle:horizontal { background: #9fb7e5; border-radius: 4px; min-width: 28px; }"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; border: none; background: transparent; }"
+        )
+    return (
+        "QScrollBar:vertical { background: rgba(15,23,42,0.55); width: 8px; border-radius: 4px; margin: 0px; }"
+        "QScrollBar::handle:vertical { background: rgba(71,85,105,0.85); border-radius: 4px; min-height: 28px; }"
+        "QScrollBar::handle:vertical:hover { background: #06b6d4; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: transparent; }"
+        "QScrollBar:horizontal { background: rgba(15,23,42,0.55); height: 8px; border-radius: 4px; margin: 0px; }"
+        "QScrollBar::handle:horizontal { background: rgba(71,85,105,0.85); border-radius: 4px; min-width: 28px; }"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; border: none; background: transparent; }"
+    )
+
+
+def _phase_scroll_qss() -> str:
+    return "QScrollArea { background: transparent; border: none; }" + _local_scrollbar_qss()
+
+
+def _console_qss() -> str:
+    if _is_light():
+        return (
+            "QTextEdit { background: #f8fbff; border: none; border-radius: 0px;"
+            " color: #2f4f85; padding: 12px 6px; }"
+            + _local_scrollbar_qss()
+        )
+    return (
+        "QTextEdit { background: rgba(15,23,42,0.60); border: none; border-radius: 0px;"
+        " color: #93a4c2; padding: 12px 6px; }"
+        + _local_scrollbar_qss()
+    )
+
+
+def _soften_console_markup(text: str) -> str:
+    """Dim ASCII/Unicode progress bars and separator rules in console HTML."""
+    block_col = "#9fb7e5" if _is_light() else "#52617a"
+    rule_col = "#9fb7e5" if _is_light() else "#46546a"
+    text = _re.sub(
+        r"([─━═-]{4,})",
+        rf'<span style="color:{rule_col}">\1</span>',
+        text,
+    )
+    text = _re.sub(
+        r"([█▓▒░▉▊▋▌▍▎▏▐▔▁▂▃▄▅▆▇■□]{3,})",
+        rf'<span style="color:{block_col}">\1</span>',
+        text,
+    )
+    return text
 
 
 LOG_COLORS = {
@@ -125,18 +338,20 @@ class _PhaseCard(QFrame):
     Module rows tick to ✓ as module_done signals arrive.
     """
 
-    _STYLE_PENDING  = ("QFrame { background: rgba(30,41,59,0.3);"
+    _STYLE_PENDING  = ("QFrame#PhaseCard { background: rgba(30,41,59,0.3);"
                        "  border: 1px solid rgba(51,65,85,0.4); border-radius: 10px; }")
-    _STYLE_ACTIVE   = ("QFrame { background: rgba(6,182,212,0.05);"
+    _STYLE_ACTIVE   = ("QFrame#PhaseCard { background: rgba(6,182,212,0.05);"
                        "  border: 1px solid #06b6d4; border-radius: 10px; }")
-    _STYLE_COMPLETE = ("QFrame { background: rgba(52,211,153,0.05);"
+    _STYLE_COMPLETE = ("QFrame#PhaseCard { background: rgba(52,211,153,0.05);"
                        "  border: 1px solid rgba(52,211,153,0.4); border-radius: 10px; }")
-    _STYLE_ERROR    = ("QFrame { background: rgba(248,113,113,0.05);"
+    _STYLE_ERROR    = ("QFrame#PhaseCard { background: rgba(248,113,113,0.05);"
                        "  border: 1px solid rgba(248,113,113,0.4); border-radius: 10px; }")
 
     def __init__(self, phase_idx: int, phase_meta: dict, parent=None):
         super().__init__(parent)
         self._idx     = phase_idx
+        self.setObjectName("PhaseCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._modules = phase_meta["modules"]
         self._mod_labels: dict[str, QLabel] = {}   # module_name → dot label
         self._active  = False
@@ -150,25 +365,18 @@ class _PhaseCard(QFrame):
 
         self._icon = QLabel("○")
         self._icon.setFont(QFont("Segoe UI", 16))
-        self._icon.setStyleSheet(
-            "color: #64748b; background: transparent; border: none; border-radius: 0px;"
-        )
+        self._icon.setStyleSheet(_plain_style("#64748b"))
         self._icon.setFixedWidth(24)
         hdr.addWidget(self._icon)
 
-        name_lbl = QLabel(f"Phase {phase_idx + 1}: {phase_meta['name']}")
-        name_lbl.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        name_lbl.setStyleSheet(
-            "color: #ffffff; background: transparent; border: none; border-radius: 0px;"
-        )
-        hdr.addWidget(name_lbl, stretch=1)
+        self._name_lbl = QLabel(f"Phase {phase_idx + 1}: {phase_meta['name']}")
+        self._name_lbl.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
+        self._name_lbl.setStyleSheet(_plain_style("#ffffff"))
+        hdr.addWidget(self._name_lbl, stretch=1)
 
         self._badge = QLabel("PENDING")
         self._badge.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self._badge.setStyleSheet(
-            "background: rgba(51,65,85,0.4); color: #64748b;"
-            "border-radius: 8px; padding: 2px 8px;"
-        )
+        self._badge.setStyleSheet(_badge_qss("pending"))
         hdr.addWidget(self._badge)
         vb.addLayout(hdr)
 
@@ -180,18 +388,12 @@ class _PhaseCard(QFrame):
 
             dot = QLabel("●")
             dot.setFont(QFont("Segoe UI", 8))
-            dot.setStyleSheet(
-                "color: #475569; background: transparent;"
-                "border: none; border-radius: 0px;"
-            )
+            dot.setStyleSheet(_plain_style("#475569"))
             dot.setFixedWidth(16)
 
             mod_lbl = QLabel(mod_name)
             mod_lbl.setFont(QFont("Segoe UI", 11))
-            mod_lbl.setStyleSheet(
-                "color: #64748b; background: transparent;"
-                "border: none; border-radius: 0px;"
-            )
+            mod_lbl.setStyleSheet(_plain_style("#64748b"))
 
             row.addWidget(dot)
             row.addWidget(mod_lbl, stretch=1)
@@ -206,75 +408,51 @@ class _PhaseCard(QFrame):
 
     def set_pending(self):
         self._active = False
-        self.setStyleSheet(self._STYLE_PENDING)
+        self.setStyleSheet(_phase_card_qss("pending"))
         self._icon.setText("○")
-        self._icon.setStyleSheet(
-            "color: #64748b; background: transparent; border: none; border-radius: 0px;"
-        )
+        self._icon.setStyleSheet(_plain_style("#64748b"))
+        self._name_lbl.setStyleSheet(_plain_style("#ffffff"))
         self._badge.setText("PENDING")
-        self._badge.setStyleSheet(
-            "background: rgba(51,65,85,0.4); color: #64748b;"
-            "border-radius: 8px; padding: 2px 8px;"
-        )
+        self._badge.setStyleSheet(_badge_qss("pending"))
         for dot, lbl in self._mod_labels.values():
             dot.setText("●")
             dot.setFont(QFont("Segoe UI", 8))
-            dot.setStyleSheet(
-                "color: #475569; background: transparent; border: none; border-radius: 0px;"
-            )
-            lbl.setStyleSheet(
-                "color: #64748b; background: transparent; border: none; border-radius: 0px;"
-            )
+            dot.setStyleSheet(_plain_style("#475569"))
+            lbl.setStyleSheet(_plain_style("#64748b"))
 
     def set_active(self):
         self._active = True
-        self.setStyleSheet(self._STYLE_ACTIVE)
+        self.setStyleSheet(_phase_card_qss("active"))
         self._icon.setText("⟳")
-        self._icon.setStyleSheet(
-            "color: #06b6d4; background: transparent; border: none; border-radius: 0px;"
-        )
+        self._icon.setStyleSheet(_plain_style("#06b6d4"))
+        self._name_lbl.setStyleSheet(_plain_style("#ffffff"))
         self._badge.setText("ACTIVE")
-        self._badge.setStyleSheet(
-            "background: rgba(6,182,212,0.15); color: #06b6d4;"
-            "border-radius: 8px; padding: 2px 8px;"
-        )
+        self._badge.setStyleSheet(_badge_qss("active"))
 
     def set_complete(self):
         self._active = False
-        self.setStyleSheet(self._STYLE_COMPLETE)
+        self.setStyleSheet(_phase_card_qss("complete"))
         self._icon.setText("✓")
-        self._icon.setStyleSheet(
-            "color: #34d399; background: transparent; border: none; border-radius: 0px;"
-        )
+        self._icon.setStyleSheet(_plain_style("#34d399"))
+        self._name_lbl.setStyleSheet(_plain_style("#34d399"))
         self._badge.setText("COMPLETE")
-        self._badge.setStyleSheet(
-            "background: rgba(52,211,153,0.15); color: #34d399;"
-            "border-radius: 8px; padding: 2px 8px;"
-        )
+        self._badge.setStyleSheet(_badge_qss("complete"))
         # Tick all remaining module dots
         for dot, lbl in self._mod_labels.values():
             if dot.text() != "✓":
                 dot.setText("✓")
                 dot.setFont(QFont("Segoe UI", 10, QFont.Bold))
-                dot.setStyleSheet(
-                    "color: #34d399; background: transparent; border: none; border-radius: 0px;"
-                )
-                lbl.setStyleSheet(
-                    "color: #34d399; background: transparent; border: none; border-radius: 0px;"
-                )
+                dot.setStyleSheet(_plain_style("#34d399"))
+                lbl.setStyleSheet(_plain_style("#34d399"))
 
     def set_error(self):
         self._active = False
-        self.setStyleSheet(self._STYLE_ERROR)
+        self.setStyleSheet(_phase_card_qss("error"))
         self._icon.setText("✗")
-        self._icon.setStyleSheet(
-            "color: #f87171; background: transparent; border: none; border-radius: 0px;"
-        )
+        self._icon.setStyleSheet(_plain_style("#f87171"))
+        self._name_lbl.setStyleSheet(_plain_style("#f87171"))
         self._badge.setText("ERROR")
-        self._badge.setStyleSheet(
-            "background: rgba(248,113,113,0.15); color: #f87171;"
-            "border-radius: 8px; padding: 2px 8px;"
-        )
+        self._badge.setStyleSheet(_badge_qss("error"))
 
     def animate_tick(self, tick: int):
         """Animate the active refresh icon without changing phase logic."""
@@ -304,6 +482,8 @@ class _PhaseCard(QFrame):
 class RealtimeAnalysisPage(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.setObjectName("RealtimeAnalysisPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.mw              = main_window
         self._worker         = None
         self._last_session_id = None   # guards against re-run on window restore
@@ -315,7 +495,7 @@ class RealtimeAnalysisPage(QWidget):
         self._activity_timer.setInterval(120)
         self._activity_timer.timeout.connect(self._animate_activity)
         self._progress_anim   = None
-        self.setStyleSheet("background: transparent;")
+        set_role(self, "transparent")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -360,11 +540,22 @@ class RealtimeAnalysisPage(QWidget):
                         if locked else ("Settings" if text == "⚙" else "")
                     )
                     if locked:
-                        btn.setStyleSheet(
-                            "QPushButton { background: rgba(51,65,85,0.18);"
-                            "  border: 1px solid rgba(51,65,85,0.32); border-radius: 8px;"
-                            "  color: rgba(148,163,184,0.42); padding: 0 14px; }"
-                        )
+                        btn.setGraphicsEffect(None)
+                        if _is_light():
+                            btn.setStyleSheet(
+                                "QPushButton, QPushButton:disabled { background: #eef4ff;"
+                                "  border: 1px solid #cfe0ff; border-radius: 8px;"
+                                "  color: #8ea1c6; padding: 0 14px; font-weight: 800; }"
+                            )
+                        else:
+                            btn.setStyleSheet(
+                                "QPushButton, QPushButton:disabled { background: rgba(51,65,85,0.30);"
+                                "  border: 1px solid rgba(100,116,139,0.45); border-radius: 8px;"
+                                "  color: rgba(203,213,225,0.62); padding: 0 14px; font-weight: 800; }"
+                            )
+                    else:
+                        btn.setGraphicsEffect(None)
+                        btn.setStyleSheet("")
         except Exception:
             pass
 
@@ -378,7 +569,7 @@ class RealtimeAnalysisPage(QWidget):
 
         # Overall progress block
         ov = QFrame()
-        ov.setStyleSheet("background: transparent; border: none;")
+        set_role(ov, "transparent")
         ov_vb = QVBoxLayout(ov)
         ov_vb.setContentsMargins(0, 0, 0, 0)
         ov_vb.setSpacing(8)
@@ -386,34 +577,26 @@ class RealtimeAnalysisPage(QWidget):
         self.overall_pct = QLabel("0%")
         self.overall_pct.setFont(QFont("Segoe UI", 36, QFont.Bold))
         self.overall_pct.setAlignment(Qt.AlignCenter)
-        self.overall_pct.setStyleSheet("color: #06b6d4; background: transparent;")
+        set_tone(self.overall_pct, "#06b6d4")
 
         ov_sub = QLabel("Overall Progress")
         ov_sub.setFont(QFont("Segoe UI", 12))
         ov_sub.setAlignment(Qt.AlignCenter)
-        ov_sub.setStyleSheet("color: #94a3b8; background: transparent;")
+        set_tone(ov_sub, "#94a3b8")
 
         self.overall_bar = QProgressBar()
         self.overall_bar.setRange(0, 100)
         self.overall_bar.setValue(0)
         self.overall_bar.setFixedHeight(8)
         self.overall_bar.setTextVisible(False)
-        self.overall_bar.setStyleSheet(
-            "QProgressBar { background: #1e293b; border-radius: 4px; border: none; }"
-            "QProgressBar::chunk { background: qlineargradient("
-            "  x1:0, y1:0, x2:1, y2:0, stop:0 #06b6d4, stop:1 #2563eb);"
-            "  border-radius: 4px; }"
-        )
+        self.overall_bar.setStyleSheet(_progress_bar_qss("overall"))
 
         self.activity_bar = QProgressBar()
         self.activity_bar.setRange(0, 100)
         self.activity_bar.setValue(0)
         self.activity_bar.setFixedHeight(4)
         self.activity_bar.setTextVisible(False)
-        self.activity_bar.setStyleSheet(
-            "QProgressBar { background: transparent; border: none; border-radius: 2px; }"
-            "QProgressBar::chunk { background: rgba(6,182,212,0.45); border-radius: 2px; }"
-        )
+        self.activity_bar.setStyleSheet(_progress_bar_qss("activity"))
         self.activity_bar.hide()
 
         ov_vb.addWidget(self.overall_pct)
@@ -424,10 +607,11 @@ class RealtimeAnalysisPage(QWidget):
 
         # Phase cards scroll area
         scroll = QScrollArea()
+        scroll.setObjectName("RealtimePhaseScroll")
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.setStyleSheet(_phase_scroll_qss())
         sw = QWidget()
-        sw.setStyleSheet("background: transparent;")
+        set_role(sw, "transparent")
         sw_vb = QVBoxLayout(sw)
         sw_vb.setContentsMargins(0, 0, 4, 0)
         sw_vb.setSpacing(10)
@@ -454,35 +638,33 @@ class RealtimeAnalysisPage(QWidget):
 
         # Console header bar
         hdr_bar = QFrame()
+        hdr_bar.setObjectName("ConsoleHeaderBar")
         hdr_bar.setFixedHeight(52)
-        hdr_bar.setStyleSheet(
-            "QFrame { background: transparent; border: none;"
-            "  border-bottom: 1px solid rgba(51,65,85,0.4); }"
-        )
+        hdr_bar.setStyleSheet(_console_header_qss())
         hdr_row = QHBoxLayout(hdr_bar)
         hdr_row.setContentsMargins(16, 0, 16, 0)
 
         self._console_title = QLabel("⌨  Analysis Console")
         self._console_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        self._console_title.setStyleSheet("color: #ffffff; background: transparent;")
+        set_tone(self._console_title, "#ffffff")
         hdr_row.addWidget(self._console_title)
         hdr_row.addStretch()
 
         # Live log counter badge
         self._log_badge = QLabel("0 lines")
+        self._log_badge.setObjectName("RealtimeLineCountBadge")
         self._log_badge.setFont(QFont("Segoe UI", 10))
         self._log_badge.setFixedHeight(30)
-        self._log_badge.setStyleSheet(
-            "background: rgba(6,182,212,0.10); color: #06b6d4;"
-            "border: 1px solid rgba(6,182,212,0.2); border-radius: 8px; padding: 0px 10px;"
-        )
+        self._log_badge.setStyleSheet(_log_badge_qss())
         hdr_row.addWidget(self._log_badge)
         hdr_row.addSpacing(8)
 
         clr_btn = QPushButton("Clear")
-        clr_btn.setObjectName("iconBtn")
-        clr_btn.setFont(QFont("Segoe UI", 11))
-        clr_btn.setFixedHeight(30)
+        self.clear_btn = clr_btn
+        clr_btn.setObjectName("RealtimeClearButton")
+        clr_btn.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        clr_btn.setFixedSize(74, 30)
+        clr_btn.setStyleSheet(_clear_button_qss())
         clr_btn.clicked.connect(self._clear_console)
         hdr_row.addWidget(clr_btn)
 
@@ -490,12 +672,10 @@ class RealtimeAnalysisPage(QWidget):
 
         # Console output
         self.console = QTextEdit()
+        self.console.setObjectName("RealtimeConsole")
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Courier New", 11))
-        self.console.setStyleSheet(
-            "QTextEdit { background: rgba(15,23,42,0.6); border: none;"
-            "  border-radius: 0px; color: #94a3b8; padding: 12px 6px; }"
-        )
+        self.console.setStyleSheet(_console_qss())
         # Remove paragraph margins Qt adds between every append() call
         self.console.document().setDefaultStyleSheet(
             "p, div, span { margin: 0; padding: 0; line-height: 1.55; }"
@@ -504,7 +684,8 @@ class RealtimeAnalysisPage(QWidget):
 
         # Button row (cancel / view results / retry)
         btn_frame = QFrame()
-        btn_frame.setStyleSheet("QFrame { background: transparent; border: none; }")
+        btn_frame.setObjectName("ConsoleButtonFrame")
+        btn_frame.setStyleSheet("QFrame#ConsoleButtonFrame { background: transparent; border: none; }")
         btn_row = QHBoxLayout(btn_frame)
         btn_row.setContentsMargins(16, 10, 16, 14)
         btn_row.setSpacing(10)
@@ -512,10 +693,7 @@ class RealtimeAnalysisPage(QWidget):
         # Error banner (hidden by default)
         self._err_banner = QLabel("")
         self._err_banner.setFont(QFont("Segoe UI", 11))
-        self._err_banner.setStyleSheet(
-            "color: #f87171; background: rgba(248,113,113,0.08);"
-            "border: 1px solid rgba(248,113,113,0.3); border-radius: 8px; padding: 6px 12px;"
-        )
+        self._err_banner.setStyleSheet("color: #dc2626; background: " + ("#fff7f7" if _is_light() else "rgba(248,113,113,0.08)") + "; border: 1px solid " + ("#fecaca" if _is_light() else "rgba(248,113,113,0.3)") + "; border-radius: 8px; padding: 6px 12px;")
         self._err_banner.setWordWrap(True)
         self._err_banner.hide()
         vb.addWidget(self._err_banner)
@@ -720,12 +898,14 @@ class RealtimeAnalysisPage(QWidget):
             except Exception:
                 pass
 
-        safe_msg = _html.escape(raw_msg)   # FIX #5: sanitise before inserting
+        safe_msg = _soften_console_markup(_html.escape(raw_msg))   # FIX #5: sanitise before inserting
+        ts_col = "#5f75a6" if _is_light() else "#64748b"
+        msg_col = "#2f4f85" if _is_light() else "#93a4c2"
 
         html = (
-            f'<span style="color:#475569">{ts}</span>&nbsp;'
+            f'<span style="color:{ts_col}">{ts}</span>&nbsp;'
             f'<span style="color:{col};font-weight:bold">[{level}]</span>&nbsp;'
-            f'<span style="color:#94a3b8">{safe_msg}</span>'
+            f'<span style="color:{msg_col}">{safe_msg}</span>'
         )
         from PyQt5.QtGui import QTextCursor
         cur = self.console.textCursor()
@@ -856,6 +1036,53 @@ class RealtimeAnalysisPage(QWidget):
         self._log_badge.setText("0 lines")
 
     # ── Auto-start on page show ───────────────────────────────────────────────
+
+    def apply_theme(self, theme: str | None = None):
+        """Refresh theme-aware Realtime Analysis widgets after live switching."""
+        active = "light" if str(theme or current_theme()).strip().lower() == "light" else "dark"
+        self.setProperty("ramdetectTheme", active)
+        try:
+            self._header.apply_theme(active)
+        except Exception:
+            pass
+        for card in self.findChildren(QFrame, "RealtimePanelCard"):
+            card.setStyleSheet(_realtime_panel_qss())
+        for pc in getattr(self, "_phase_cards", []):
+            try:
+                state = (pc._badge.text() or "pending").strip().lower()
+                pc.setStyleSheet(_phase_card_qss(state))
+                if state == "pending":
+                    pc.set_pending()
+                elif state == "active":
+                    pc.set_active()
+                elif state == "complete":
+                    pc.set_complete()
+                elif state == "error":
+                    pc.set_error()
+            except Exception:
+                pass
+        if hasattr(self, "overall_bar"):
+            self.overall_bar.setStyleSheet(_progress_bar_qss("overall"))
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setStyleSheet(_progress_bar_qss("activity"))
+        for scroll_area in self.findChildren(QScrollArea, "RealtimePhaseScroll"):
+            try:
+                scroll_area.setStyleSheet(_phase_scroll_qss())
+            except Exception:
+                pass
+        for hdr in self.findChildren(QFrame, "ConsoleHeaderBar"):
+            try:
+                hdr.setStyleSheet(_console_header_qss(active))
+            except Exception:
+                pass
+        if hasattr(self, "_log_badge"):
+            self._log_badge.setStyleSheet(_log_badge_qss(active))
+        if hasattr(self, "clear_btn"):
+            self.clear_btn.setStyleSheet(_clear_button_qss(active))
+        if hasattr(self, "console"):
+            self.console.setStyleSheet(_console_qss())
+        self._lock_header_navigation(True)
+        refresh_style(self)
 
     def showEvent(self, event):
         """

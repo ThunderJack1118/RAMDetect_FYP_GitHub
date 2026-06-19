@@ -66,14 +66,119 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QPushButton, QTableWidget, QTableWidgetItem,
     QLineEdit, QHeaderView, QSizePolicy, QAbstractItemView,
-    QStyledItemDelegate, QStyle, QDialog,
+    QStyledItemDelegate, QStyle, QDialog, QScrollBar,
 )
-from PyQt5.QtCore import Qt, QTimer, QRect, QSize
-from PyQt5.QtGui  import QFont, QColor, QBrush, QPainter, QPen
+from PyQt5.QtCore import Qt, QTimer, QRect, QSize, QEvent, QRectF, QPoint
+from PyQt5.QtGui  import QFont, QColor, QBrush, QPainter, QPen, QPainterPath, QRegion
 
 from ui.widgets.header_bar   import HeaderBar
 from ui.bridge.session       import AppState
 from ui.bridge.config_bridge import Config
+from ui.style_helpers import set_role, set_tone
+from ui.theme import current_theme
+
+
+def _is_light() -> bool:
+    return (current_theme() or "dark").lower() == "light"
+
+
+def _palette() -> dict:
+    if _is_light():
+        return {
+            "card": "#ffffff",
+            "panel": "#f8fbff",
+            "header": "#eaf1ff",
+            "border": "#d9e6ff",
+            "border2": "#c8d8f5",
+            "text": "#1e3a6e",
+            "text2": "#385f9f",
+            "muted": "#6b82b4",
+            "muted2": "#7b8fb8",
+            "disabled": "#9aa8c3",
+            "accent": "#1a56db",
+            "accent2": "#174bbf",
+            "cyan": "#1a56db",
+            "green": "#10b981",
+            "green_bg": "#ecfdf5",
+            "green_brd": "#86efac",
+            "red": "#dc2626",
+            "red_bg": "#fff1f2",
+            "red_brd": "#fecaca",
+            "yellow": "#d97706",
+            "hover": "#eef4ff",
+            "selected": "#dbeafe",
+            "scroll_bg": "#eef4ff",
+            "scroll": "#9fb7e5",
+        }
+    # Use solid HEX colours here.  QPainter/QColor does not reliably parse
+    # CSS rgba(...) strings, which caused black badges and overly dark row
+    # dividers in the Artifact Viewer delegate.
+    return {
+        "card": "#111827",
+        "panel": "#1e293b",
+        "header": "#1e293b",
+        "border": "#1f2a3a",
+        "border2": "#2b384b",
+        "text": "#e2e8f0",
+        "text2": "#cbd5e1",
+        "muted": "#94a3b8",
+        "muted2": "#64748b",
+        "disabled": "#475569",
+        "accent": "#06b6d4",
+        "accent2": "#67e8f9",
+        "cyan": "#06b6d4",
+        "green": "#34d399",
+        "green_bg": "#047857",
+        "green_brd": "#10b981",
+        "red": "#fecaca",
+        "red_bg": "#b91c1c",
+        "red_brd": "#ef4444",
+        "yellow": "#fbbf24",
+        "hover": "#1e293b",
+        "selected": "#164e63",
+        "scroll_bg": "#0f172a",
+        "scroll": "#334155",
+    }
+
+
+def _map_color(color: str) -> str:
+    if not _is_light():
+        return color
+    return {
+        "#ffffff": "#1e3a6e",
+        "#f8fafc": "#1e3a6e",
+        "#f1f5f9": "#1e3a6e",
+        "#e2e8f0": "#1e3a6e",
+        "#cbd5e1": "#385f9f",
+        "#94a3b8": "#6b82b4",
+        "#64748b": "#7b8fb8",
+        "#475569": "#9aa8c3",
+        "#334155": "#5873a8",
+        "#06b6d4": "#1a56db",
+        "#22d3ee": "#1a56db",
+        "#67e8f9": "#1a56db",
+        "#34d399": "#10b981",
+        "#22c55e": "#10b981",
+        "#f87171": "#dc2626",
+        "#ef4444": "#dc2626",
+        "#fbbf24": "#d97706",
+    }.get(str(color).lower(), color)
+
+
+def _scrollbar_qss() -> str:
+    p = _palette()
+    return (
+        f"QScrollBar:vertical{{background:{p['scroll_bg']};width:8px;border-radius:4px;margin:0px;}}"
+        f"QScrollBar::handle:vertical{{background:{p['scroll']};border-radius:4px;min-height:24px;}}"
+        f"QScrollBar::handle:vertical:hover{{background:{p['accent']};}}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;background:transparent;border:none;}"
+        "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;border-radius:4px;}"
+        f"QScrollBar:horizontal{{background:{p['scroll_bg']};height:8px;border-radius:4px;margin:0px;}}"
+        f"QScrollBar::handle:horizontal{{background:{p['scroll']};border-radius:4px;min-width:24px;}}"
+        f"QScrollBar::handle:horizontal:hover{{background:{p['accent']};}}"
+        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;background:transparent;border:none;}"
+        "QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:transparent;border-radius:4px;}"
+    )
 
 def _project_root_for_outputs() -> str:
     """Return active RAMDetect runtime root for Artifact Viewer exports.
@@ -434,9 +539,138 @@ class _ToastDialog(QWidget):
             y   = geo.bottom() - self.height() - 24
             self.move(x, y)
         self.show()
+
+
+class _ArtifactHoverTipBox(QFrame):
+    """Painted tooltip box with no QSS, avoiding Qt stylesheet parse warnings."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if _is_light():
+            bg, br = QColor("#ffffff"), QColor("#c8d8f5")
+        else:
+            bg, br = QColor("#1e293b"), QColor("#334155")
+        painter.setBrush(QBrush(bg))
+        painter.setPen(QPen(br, 1))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 9, 9)
+
+
+class _ArtifactHoverTip(QWidget):
+    """Small RAMDetect-owned tooltip for Artifact Viewer toolbar buttons.
+
+    Native QToolTip was inheriting button styles on some Windows/PyQt builds,
+    which produced oversized cyan/red boxes and clipped bold text.  This widget
+    gives the Artifact Viewer toolbar a stable, compact tooltip without changing
+    global tooltip behaviour used by table cells.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._box = _ArtifactHoverTipBox()
+        outer.addWidget(self._box)
+
+        lay = QVBoxLayout(self._box)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(0)
+
+        self._label = QLabel("")
+        self._label.setWordWrap(True)
+        self._label.setFont(QFont("Segoe UI", 10))
+        self._label.setTextFormat(Qt.PlainText)
+        self._label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lay.addWidget(self._label)
+        self._apply_style()
+
+    def _apply_style(self):
+        if _is_light():
+            bg, br, fg = "#ffffff", "#c8d8f5", "#1e3a6e"
+        else:
+            bg, br, fg = "#1e293b", "#334155", "#e2e8f0"
+        # The tooltip box is custom-painted instead of styled through QSS.
+        # This removes the repeated "Could not parse stylesheet" warning for
+        # ArtifactHoverTipBox while keeping the same compact visual design.
+        self._box.update()
+        self._label.setStyleSheet(
+            f"color:{fg};background:transparent;border:none;font-size:10px;font-weight:400;"
+        )
+
+    def show_for(self, anchor, text: str):
+        if anchor is None:
+            return
+        self._apply_style()
+        text = " ".join(str(text or "").split())
+        if not text:
+            return
+        # Keep the tooltip readable and prevent huge one-line popups.
+        self._label.setFixedWidth(460 if len(text) > 70 else 340)
+        self._label.setText(text)
+        self.adjustSize()
+
+        pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 7))
+        x, y = pos.x(), pos.y()
+        try:
+            screen = anchor.screen().availableGeometry()
+            x = min(max(screen.left() + 8, x), screen.right() - self.width() - 8)
+            if y + self.height() > screen.bottom() - 8:
+                y = anchor.mapToGlobal(QPoint(0, -self.height() - 7)).y()
+        except Exception:
+            pass
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    def hide_tip(self):
+        self.hide()
 _HEADER_H = 42
-_BADGE_W  = 130
-_BADGE_H  = 26
+_BADGE_W  = 116
+_BADGE_H  = 24
+_VISIBLE_ROWS = 10
+_SCROLLBAR_W  = 8
+
+
+class _RoundedArtifactTable(QTableWidget):
+    """QTableWidget clipped to the same rounded cage as the table card.
+
+    The light theme makes rectangular child-widget backgrounds very visible at
+    the four table corners.  A widget mask clips those square corners without
+    changing row painting, scrollbar positioning, export logic, or any backend
+    behaviour.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._corner_radius = 14
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_rounded_mask()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_rounded_mask()
+
+    def _apply_rounded_mask(self):
+        try:
+            if self.width() <= 0 or self.height() <= 0:
+                return
+            path = QPainterPath()
+            rect = QRectF(self.rect()).adjusted(0.0, 0.0, -0.5, -0.5)
+            path.addRoundedRect(rect, self._corner_radius, self._corner_radius)
+            self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        except Exception:
+            # A missing mask is only a visual fallback; never break the page.
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -455,25 +689,90 @@ class _StatusDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
+        p = _palette()
+
+        # Match the Status cell background to the rest of the table first so
+        # the column no longer looks visually lifted/disjoint.
+        painter.fillRect(option.rect, QColor(p['card']))
         if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, QColor(6, 182, 212, 40))
+            painter.fillRect(option.rect, QColor(219, 234, 254, 220) if _is_light() else QColor(6, 182, 212, 40))
         elif option.state & QStyle.State_MouseOver:
-            painter.fillRect(option.rect, QColor(51, 65, 85, 70))
-        text    = index.data(Qt.DisplayRole) or ""
+            painter.fillRect(option.rect, QColor(238, 244, 255, 255) if _is_light() else QColor(51, 65, 85, 70))
+        text = index.data(Qt.DisplayRole) or ""
         is_susp = "SUSPICIOUS" in text
-        x    = option.rect.x() + max(0, (option.rect.width()  - _BADGE_W) // 2)
-        y    = option.rect.y() +        (option.rect.height() - _BADGE_H) // 2
+        x = option.rect.x() + max(0, (option.rect.width() - _BADGE_W) // 2)
+        y = option.rect.y() + max(0, (option.rect.height() - _BADGE_H) // 2) + 1
         pill = QRect(x, y, _BADGE_W, _BADGE_H)
-        painter.setBrush(QBrush(self._SUSP_BG  if is_susp else self._CLEN_BG))
-        painter.setPen(QPen(self._SUSP_BRD if is_susp else self._CLEN_BRD, 1.5))
-        painter.drawRoundedRect(pill, 8, 8)
-        painter.setPen(self._TEXT_COL)
+        painter.setBrush(QBrush(QColor(p['red_bg'] if is_susp else p['green_bg'])))
+        painter.setPen(QPen(QColor(p['red_brd'] if is_susp else p['green_brd']), 1.0))
+        painter.drawRoundedRect(pill, 7, 7)
+        # Dark mode badge text/icon should read brighter than the green/red
+        # fill while light mode keeps the existing semantic colour.
+        badge_text = ("#fff7ed" if is_susp else "#ecfff7") if not _is_light() else (p['red'] if is_susp else p['green'])
+        painter.setPen(QColor(badge_text))
         painter.setFont(self._FONT)
         painter.drawText(pill, Qt.AlignCenter, text)
+
+        # Draw the row divider explicitly across the full Status cell width.
+        painter.setPen(QPen(QColor(p['border']), 2))
+        y_line = option.rect.bottom() + 1
+        painter.setClipping(False)
+        painter.drawLine(option.rect.left(), y_line, option.rect.right(), y_line)
         painter.restore()
 
     def sizeHint(self, option, index):
-        return QSize(_BADGE_W + 20, 44)
+        return QSize(_BADGE_W + 12, 44)
+
+
+class _HeaderGutter(QFrame):
+    """Paint one continuous rounded header background without QSS.
+
+    This avoids the ArtifactTableHeaderGutter stylesheet parse warning and
+    prevents square QHeaderView section backgrounds from leaking at the top
+    corners of the rounded table cage.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Do not set an objectName here. Earlier object-scoped QSS caused
+        # repeated ArtifactTableHeaderGutter parse warnings in the console.
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(_palette()['header'])))
+        # Fill a flat header band and let _RoundedArtifactTable's mask clip
+        # the outer top corners.  v15 adds 2px more fill than v14 to close
+        # the remaining pinhole gaps while leaving the working table layout
+        # unchanged.
+        painter.drawRect(self.rect().adjusted(-5, -5, 6, 5))
+
+
+class _TableBorderOverlay(QFrame):
+    """Paint the rounded table cage above QTableWidget children.
+
+    QTableWidget, QHeaderView, and overlay scrollbars are rectangular child
+    widgets. Painting this transparent overlay last keeps only the outer rounded
+    table border visible and hides small square corner leaks without using QSS.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(Qt.NoBrush)
+        pen = QPen(QColor(_palette()['border']), 1)
+        painter.setPen(pen)
+        # Keep the stroke fully inside the widget so it does not produce a
+        # bright clipped line at the dark-mode table edge.
+        r = self.rect().adjusted(0, 0, -1, -1)
+        painter.drawRoundedRect(r, 14, 14)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1002,15 +1301,20 @@ def _sorted_rows(rows, getters, sort_col, ascending):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _card() -> QFrame:
+    p = _palette()
     f = QFrame()
+    f.setObjectName("ArtifactTableCard")
+    # Object-scoped style keeps the table cage border on the outer card only.
+    # This prevents the same border from leaking into child frames/scrollbar
+    # overlays and avoids bright inner lines in dark mode.
     f.setStyleSheet(
-        "QFrame{background:rgba(15,23,42,0.55);"
-        "border:1px solid rgba(51,65,85,0.55);border-radius:14px;}"
+        f"QFrame#ArtifactTableCard{{background-color:{p['card']};border:1px solid {p['border']};border-radius:14px;}}"
     )
     return f
 
 def _lbl(text, size=12, bold=False, color="#94a3b8") -> QLabel:
     l = QLabel(text)
+    color = _map_color(color)
     l.setStyleSheet(
         f"color:{color};background:transparent;border:none;"
         f"font-size:{size}px;font-weight:{'700' if bold else '400'};"
@@ -1039,7 +1343,8 @@ class ArtifactsViewerPage(QWidget):
         self._susp_only  = False
         self._sort_col   = -1
         self._sort_asc   = True
-        self.setStyleSheet("background:transparent;")
+        self._hover_tip  = None
+        set_role(self, "transparent")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1052,7 +1357,7 @@ class ArtifactsViewerPage(QWidget):
         root.addWidget(hdr)
 
         body = QVBoxLayout()
-        body.setContentsMargins(32, 20, 32, 20)
+        body.setContentsMargins(40, 20, 40, 20)
         body.setSpacing(14)
         body.addWidget(self._build_tab_row())
         body.addWidget(self._build_table_card(), stretch=1)
@@ -1064,7 +1369,7 @@ class ArtifactsViewerPage(QWidget):
 
     def _build_tab_row(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background:transparent;")
+        set_role(w, "transparent")
         row = QHBoxLayout(w)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
@@ -1075,7 +1380,7 @@ class ArtifactsViewerPage(QWidget):
             btn.setFixedHeight(38)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(self._tab_style(i == 0))
-            btn.setToolTip(_TAB_TIPS.get(name, "View this artifact category."))
+            self._register_hover_tip(btn, _TAB_TIPS.get(name, "View this artifact category."))
             btn.clicked.connect(lambda _, idx=i: self._switch_tab(idx))
             self._tab_btns.append(btn)
             row.addWidget(btn)
@@ -1086,95 +1391,105 @@ class ArtifactsViewerPage(QWidget):
         self._susp_btn.setCheckable(True)
         self._susp_btn.setFixedHeight(36)
         self._susp_btn.setCursor(Qt.PointingHandCursor)
-        self._susp_btn.setToolTip("Show only artifacts with suspicious indicators.")
+        self._register_hover_tip(self._susp_btn, "Show only artifacts with suspicious indicators.")
         self._susp_btn.setStyleSheet(self._susp_style(False))
         self._susp_btn.clicked.connect(self._toggle_susp)
         row.addWidget(self._susp_btn)
 
         search_frame = QFrame()
+        self._search_frame = search_frame
         search_frame.setFixedHeight(36)
         search_frame.setStyleSheet(
-            "QFrame{background:rgba(30,41,59,0.6);"
-            "border:1px solid rgba(51,65,85,0.7);border-radius:9px;}"
+            f"QFrame{{background:{_palette()['panel']};border:1px solid {_palette()['border2']};border-radius:9px;}}"
         )
         sf = QHBoxLayout(search_frame)
         sf.setContentsMargins(10, 0, 10, 0)
         sf.setSpacing(6)
         srch_ic = QLabel("🔍")
-        srch_ic.setStyleSheet("color:#64748b;background:transparent;border:none;font-size:12px;")
+        srch_ic.setStyleSheet(f"color:{_palette()['muted2']};background:transparent;border:none;font-size:12px;")
         sf.addWidget(srch_ic)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search artifacts...")
-        self.search.setToolTip("Search visible artifacts by PID, process name, path, status, or anomaly.")
+        self._register_hover_tip(self.search, "Search visible artifacts by PID, process name, path, status, or anomaly.")
         self.search.setFixedWidth(190)
         self.search.setStyleSheet(
-            "QLineEdit{background:transparent;border:none;color:#e2e8f0;font-size:12px;}"
-            "QLineEdit::placeholder{color:#475569;}"
+            f"QLineEdit{{background:transparent;border:none;color:{_palette()['text']};font-size:12px;}}"
+            f"QLineEdit::placeholder{{color:{_palette()['disabled']};}}"
         )
         self.search.textChanged.connect(self._apply_row_filter)
         sf.addWidget(self.search)
         row.addWidget(search_frame)
 
         export_btn = QPushButton("⬇ Export Tab")
+        self._export_btn = export_btn
         export_btn.setFixedHeight(36)
         export_btn.setCursor(Qt.PointingHandCursor)
-        export_btn.setToolTip("Choose CSV or themed XLSX export for the current artifact tab.")
+        self._register_hover_tip(export_btn, "Choose CSV or themed XLSX export for the current artifact tab.")
         export_btn.setStyleSheet(
-            "QPushButton{background:rgba(30,41,59,0.6);"
-            "border:1px solid rgba(51,65,85,0.6);border-radius:9px;"
-            "color:#cbd5e1;padding:0 14px;font-size:12px;font-weight:700;}"
-            "QPushButton:hover{background:rgba(6,182,212,0.12);color:#ffffff;"
-            "border:1px solid rgba(6,182,212,0.35);}"
-            "QPushButton:pressed{background:rgba(15,23,42,0.8);}"
+            f"background-color:{_palette()['panel']};border:1px solid {_palette()['border']};border-radius:9px;"
+            f"color:{_palette()['text2']};padding-top:0px;padding-bottom:0px;padding-left:14px;padding-right:14px;font-size:12px;font-weight:700;"
         )
         export_btn.clicked.connect(self._show_export_choice_dialog)
         row.addWidget(export_btn)
 
         xlsx_btn = QPushButton("📊 All XLSX")
+        self._xlsx_btn = xlsx_btn
         xlsx_btn.setFixedHeight(36)
         xlsx_btn.setCursor(Qt.PointingHandCursor)
-        xlsx_btn.setToolTip("Export all artifact tabs into one Excel workbook with separate sheets.")
+        self._register_hover_tip(xlsx_btn, "Export all artifact tabs into one Excel workbook with separate sheets.")
         xlsx_btn.setStyleSheet(
-            "QPushButton{background:rgba(6,182,212,0.10);"
-            "border:1px solid rgba(6,182,212,0.35);border-radius:9px;"
-            "color:#67e8f9;padding:0 12px;font-size:12px;font-weight:700;}"
-            "QPushButton:hover{background:rgba(6,182,212,0.18);color:#ffffff;}"
-            "QPushButton:pressed{background:rgba(8,145,178,0.24);}"
+            f"background-color:{'#eef4ff' if _is_light() else '#083344'};"
+            f"border:1px solid {_palette()['accent']};border-radius:9px;color:{_palette()['accent']};"
+            "padding-top:0px;padding-bottom:0px;padding-left:12px;padding-right:12px;font-size:12px;font-weight:700;"
         )
         xlsx_btn.clicked.connect(self._export_excel_all)
         row.addWidget(xlsx_btn)
 
-        self._exp_lbl = QLabel("")
+        # Keep the export status label as a hidden child instead of adding it
+        # to the toolbar layout.  When this empty label is added after
+        # "All XLSX", it still consumes right-side layout space and prevents
+        # the toolbar edge from aligning with the table card/header margin.
+        self._exp_lbl = QLabel("", w)
         self._exp_lbl.setStyleSheet(
             "color:#34d399;background:transparent;border:none;font-size:11px;"
         )
-        row.addWidget(self._exp_lbl)
+        self._exp_lbl.hide()
 
         self._refresh_tab_styles()
         return w
 
     @staticmethod
     def _tab_style(active: bool) -> str:
+        p = _palette()
         if active:
-            return ("QPushButton{background:#06b6d4;color:#ffffff;"
-                    "border-radius:9px;padding:4px 16px;"
-                    "font-size:12px;font-weight:700;border:none;}")
-        return ("QPushButton{background:rgba(30,41,59,0.5);color:#94a3b8;"
-                "border:1px solid rgba(51,65,85,0.5);border-radius:9px;"
-                "padding:4px 14px;font-size:12px;}"
-                "QPushButton:hover{background:rgba(51,65,85,0.6);color:#e2e8f0;}")
+            return (
+                f"background-color:{p['accent']};color:#ffffff;border:1px solid {p['accent']};border-radius:9px;"
+                "padding-top:4px;padding-bottom:4px;padding-left:16px;padding-right:16px;"
+                "font-size:12px;font-weight:700;"
+            )
+        return (
+            f"background-color:{p['panel']};color:{p['muted']};"
+            f"border:1px solid {p['border']};border-radius:9px;"
+            "padding-top:4px;padding-bottom:4px;padding-left:14px;padding-right:14px;"
+            "font-size:12px;font-weight:700;"
+        )
 
     @staticmethod
     def _susp_style(active: bool) -> str:
+        p = _palette()
         if active:
-            return ("QPushButton{background:rgba(248,113,113,0.18);color:#f87171;"
-                    "border:1px solid rgba(248,113,113,0.45);border-radius:9px;"
-                    "padding:0 14px;font-size:12px;font-weight:600;}")
-        return ("QPushButton{background:rgba(30,41,59,0.5);color:#94a3b8;"
-                "border:1px solid rgba(51,65,85,0.5);border-radius:9px;"
-                "padding:0 14px;font-size:12px;}"
-                "QPushButton:hover{background:rgba(248,113,113,0.10);color:#f87171;"
-                "border-color:rgba(248,113,113,0.35);}")
+            return (
+                f"background-color:{p['red_bg']};color:{p['red']};"
+                f"border:1px solid {p['red_brd']};border-radius:9px;"
+                "padding-top:0px;padding-bottom:0px;padding-left:14px;padding-right:14px;"
+                "font-size:12px;font-weight:700;"
+            )
+        return (
+            f"background-color:{p['panel']};color:{p['muted']};"
+            f"border:1px solid {p['border']};border-radius:9px;"
+            "padding-top:0px;padding-bottom:0px;padding-left:14px;padding-right:14px;"
+            "font-size:12px;font-weight:700;"
+        )
 
     def _refresh_tab_styles(self):
         sess = AppState.current
@@ -1194,6 +1509,7 @@ class ArtifactsViewerPage(QWidget):
             btn.setStyleSheet(self._tab_style(i == self._active_tab))
 
     def _switch_tab(self, idx: int):
+        self._hide_artifact_hover_tip()
         self._active_tab = idx
         self._sort_col   = -1
         self._sort_asc   = True
@@ -1203,6 +1519,7 @@ class ArtifactsViewerPage(QWidget):
         self._populate_table()
 
     def _toggle_susp(self, checked: bool):
+        self._hide_artifact_hover_tip()
         self._susp_only = checked
         self._susp_btn.setStyleSheet(self._susp_style(checked))
         self._populate_table()
@@ -1213,12 +1530,13 @@ class ArtifactsViewerPage(QWidget):
 
     def _build_table_card(self) -> QFrame:
         card = _card()
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._table_card = card
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         vb = QVBoxLayout(card)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(0)
 
-        self.table = QTableWidget()
+        self.table = _RoundedArtifactTable()
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(False)
@@ -1228,50 +1546,75 @@ class ArtifactsViewerPage(QWidget):
         self.table.setFrameShape(QFrame.NoFrame)
         self.table.setSortingEnabled(False)
         self.table.setWordWrap(False)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Use a row-only overlay vertical scrollbar so the thumb starts at
+        # the content row level, not beside the column header.
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.horizontalHeader().setFixedHeight(_HEADER_H)
+        table_h = _HEADER_H + (_VISIBLE_ROWS * self.table.verticalHeader().defaultSectionSize()) + _SCROLLBAR_W + 2
+        self.table.setFixedHeight(table_h)
+        card.setFixedHeight(table_h)
 
         self._status_delegate = _StatusDelegate(self.table)
 
+        row_bg = _palette()['card']
         self.table.setStyleSheet(
-            "QTableWidget{background:transparent;border:none;outline:none;}"
-            "QTableWidget::item{"
-            "  padding:6px 14px;border:none;"
-            "  border-bottom:1px solid rgba(51,65,85,0.20);"
-            "}"
-            "QTableWidget::item:hover{background:rgba(51,65,85,0.28);}"
-            "QTableWidget::item:selected{background:rgba(6,182,212,0.16);color:#ffffff;}"
-            "QTableWidget::item:focus{outline:0;border:none;}"
+            f"QTableWidget{{background:{row_bg};border:none;selection-background-color:{_palette()['selected']};selection-color:{_palette()['text']};margin:0px;padding:0px;}}"
+            f"QTableCornerButton::section{{background:{_palette()['header']};border:none;}}"
+            f"QTableWidget::item{{background:{row_bg};padding:6px 14px;border:none;border-bottom:1px solid {_palette()['border']};}}"
+            f"QTableWidget::item:hover{{background:{_palette()['hover']};}}"
+            f"QTableWidget::item:selected{{background:{_palette()['selected']};color:{_palette()['text']};}}"
+            "QTableWidget::item:focus{border:none;}"
         )
+        self.table.viewport().setStyleSheet(f"background:{row_bg};border:none;")
         self.table.horizontalHeader().setStyleSheet(
-            "QHeaderView{background:rgba(22,33,52,0.95);border:none;}"
-            "QHeaderView::section{"
-            "  background:rgba(22,33,52,0.95);color:#94a3b8;"
-            "  padding:11px 14px;border:none;"
-            "  border-bottom:1px solid rgba(51,65,85,0.6);"
-            "  font-size:11px;font-weight:700;letter-spacing:0.4px;"
-            "}"
-            "QHeaderView::section:hover{background:rgba(6,182,212,0.09);color:#e2e8f0;}"
+            "QHeaderView{background:transparent;border:none;}"
+            f"QHeaderView::section{{background:transparent;color:{_palette()['muted']};"
+            f"padding-top:11px;padding-bottom:11px;padding-left:14px;padding-right:14px;"
+            f"border:none;border-bottom:1px solid {_palette()['border']};border-radius:0px;}}"
+            f"QHeaderView::section:hover{{background:{_palette()['hover']};color:{_palette()['accent']};}}"
         )
         self.table.horizontalHeader().sectionClicked.connect(self._header_clicked)
 
-        sb_qss = (
-            f"QScrollBar:vertical{{background:rgba(15,23,42,0.4);width:8px;"
-            f"border-radius:4px;margin-top:{_HEADER_H}px;margin-bottom:0px;}}"
-            "QScrollBar::handle:vertical{background:#334155;border-radius:4px;min-height:24px;}"
-            "QScrollBar::handle:vertical:hover{background:#475569;}"
-            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;background:transparent;border:none;}"
-            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:rgba(15,23,42,0.4);border-radius:4px;}"
-            "QScrollBar:horizontal{background:rgba(15,23,42,0.4);height:8px;border-radius:4px;margin:0px;}"
-            "QScrollBar::handle:horizontal{background:#334155;border-radius:4px;min-width:24px;}"
-            "QScrollBar::handle:horizontal:hover{background:#475569;}"
-            "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;background:transparent;border:none;}"
-            "QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:rgba(15,23,42,0.4);border-radius:4px;}"
-        )
-        self.table.verticalScrollBar().setStyleSheet(sb_qss)
+        sb_qss = _scrollbar_qss()
         self.table.horizontalScrollBar().setStyleSheet(sb_qss)
 
+        # Header filler + overlay row scrollbar.  The filler keeps the header
+        # band visually complete at the right edge; the overlay scrollbar starts
+        # below the header, like the Results Dashboard findings scroller.
+        self._table_header_gutter = _HeaderGutter(self.table)
+
+        self._artifact_vscroll = QScrollBar(Qt.Vertical, self.table)
+        self._artifact_vscroll.setObjectName("ArtifactViewerRowScrollbar")
+        self._artifact_vscroll.setFixedWidth(_SCROLLBAR_W)
+        self._artifact_vscroll.setStyleSheet(sb_qss)
+        self._artifact_vscroll.valueChanged.connect(self.table.verticalScrollBar().setValue)
+
+        self._artifact_hscroll = QScrollBar(Qt.Horizontal, self.table)
+        self._artifact_hscroll.setObjectName("ArtifactViewerColumnScrollbar")
+        self._artifact_hscroll.setFixedHeight(_SCROLLBAR_W)
+        self._artifact_hscroll.setStyleSheet(sb_qss)
+        self._artifact_hscroll.valueChanged.connect(self.table.horizontalScrollBar().setValue)
+
+        self._table_border_overlay = _TableBorderOverlay(self.table)
+
+        internal_vsb = self.table.verticalScrollBar()
+        internal_vsb.rangeChanged.connect(lambda *_: self._sync_artifact_scrollbar())
+        internal_vsb.valueChanged.connect(self._sync_artifact_scrollbar_value)
+
+        internal_hsb = self.table.horizontalScrollBar()
+        internal_hsb.rangeChanged.connect(lambda *_: self._sync_artifact_scrollbar())
+        internal_hsb.valueChanged.connect(self._sync_artifact_hscroll_value)
+
+        self._table_header_gutter.raise_()
+        self._artifact_vscroll.raise_()
+        self._artifact_hscroll.raise_()
+        self._table_border_overlay.raise_()
+        self.table.installEventFilter(self)
+
         self._empty_w = QWidget()
-        self._empty_w.setStyleSheet("background:transparent;")
+        set_role(self._empty_w, "transparent")
         ev = QVBoxLayout(self._empty_w)
         ev.setAlignment(Qt.AlignCenter)
         ev.setSpacing(10)
@@ -1283,29 +1626,163 @@ class ArtifactsViewerPage(QWidget):
         self._empty_w.hide()
         return card
 
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, "table", None) and event.type() in (QEvent.Resize, QEvent.Show):
+            self._sync_artifact_scrollbar()
+
+        tip_text = ""
+        try:
+            tip_text = obj.property("ramdetectArtifactTip") or ""
+        except Exception:
+            tip_text = ""
+        if tip_text:
+            if event.type() == QEvent.Enter:
+                self._show_artifact_hover_tip(obj, tip_text)
+            elif event.type() in (QEvent.Leave, QEvent.MouseButtonPress, QEvent.Hide):
+                self._hide_artifact_hover_tip()
+        return super().eventFilter(obj, event)
+
+    def _register_hover_tip(self, widget, text: str):
+        """Use a compact custom tooltip for toolbar widgets only."""
+        if widget is None:
+            return
+        try:
+            widget.setToolTip("")
+            widget.setProperty("ramdetectArtifactTip", str(text or ""))
+            widget.installEventFilter(self)
+        except Exception:
+            pass
+
+    def _show_artifact_hover_tip(self, widget, text: str):
+        if self._hover_tip is None:
+            self._hover_tip = _ArtifactHoverTip(self)
+        self._hover_tip.show_for(widget, text)
+
+    def _hide_artifact_hover_tip(self):
+        if self._hover_tip is not None:
+            self._hover_tip.hide_tip()
+
+    def _sync_artifact_scrollbar_value(self, value: int):
+        overlay = getattr(self, "_artifact_vscroll", None)
+        if overlay is None or overlay.value() == value:
+            return
+        overlay.blockSignals(True)
+        overlay.setValue(value)
+        overlay.blockSignals(False)
+
+    def _sync_artifact_hscroll_value(self, value: int):
+        overlay = getattr(self, "_artifact_hscroll", None)
+        if overlay is None or overlay.value() == value:
+            return
+        overlay.blockSignals(True)
+        overlay.setValue(value)
+        overlay.blockSignals(False)
+
+    def _sync_artifact_scrollbar(self):
+        """Keep Artifact Viewer header/scrollbars visually flush to the table card."""
+        table = getattr(self, "table", None)
+        overlay_v = getattr(self, "_artifact_vscroll", None)
+        overlay_h = getattr(self, "_artifact_hscroll", None)
+        gutter = getattr(self, "_table_header_gutter", None)
+        border_overlay = getattr(self, "_table_border_overlay", None)
+        if table is None or overlay_v is None or overlay_h is None or gutter is None or border_overlay is None:
+            return
+        try:
+            internal_v = table.verticalScrollBar()
+            internal_h = table.horizontalScrollBar()
+
+            overlay_v.blockSignals(True)
+            overlay_v.setRange(internal_v.minimum(), internal_v.maximum())
+            overlay_v.setPageStep(internal_v.pageStep())
+            overlay_v.setSingleStep(internal_v.singleStep())
+            overlay_v.setValue(internal_v.value())
+            overlay_v.blockSignals(False)
+
+            overlay_h.blockSignals(True)
+            overlay_h.setRange(internal_h.minimum(), internal_h.maximum())
+            overlay_h.setPageStep(internal_h.pageStep())
+            overlay_h.setSingleStep(internal_h.singleStep())
+            overlay_h.setValue(internal_h.value())
+            overlay_h.blockSignals(False)
+
+            header_h = table.horizontalHeader().height() or _HEADER_H
+            sb_w = overlay_v.width() or _SCROLLBAR_W
+            sb_h = overlay_h.height() or _SCROLLBAR_W
+            need_v = internal_v.maximum() > internal_v.minimum()
+            need_h = internal_h.maximum() > internal_h.minimum()
+
+            # One continuous flat header band across the whole table width.
+            gutter.setGeometry(0, 0, table.width(), header_h)
+            gutter.lower()
+            gutter.show()
+            gutter.update()
+
+            content_h = max(0, table.height() - header_h - (sb_h if need_h else 0))
+            content_w = max(0, table.width() - (sb_w if need_v else 0))
+
+            # Keep scrollbar tracks inside the rounded card so square scrollbar
+            # ends do not cover the bottom rounded corners.
+            corner_inset = 10
+            overlay_v.setGeometry(max(0, table.width() - sb_w - 1), header_h, sb_w, max(0, content_h - corner_inset))
+            overlay_h.setGeometry(corner_inset, max(0, table.height() - sb_h - 1), max(0, content_w - (corner_inset * 2)), sb_h)
+
+            overlay_v.raise_()
+            overlay_h.raise_()
+            border_overlay.setGeometry(0, 0, table.width(), table.height())
+            border_overlay.raise_()
+            border_overlay.show()
+            border_overlay.update()
+            overlay_v.setVisible(need_v)
+            overlay_h.setVisible(need_h)
+        except Exception:
+            pass
+
+    # Backward-compatible name used by older single-shot calls.
+    def _reposition_table_header_gutter(self):
+        self._sync_artifact_scrollbar()
+
     # ─────────────────────────────────────────────────────────────────────────
     # Column setup
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Per-tab table widths tuned for readability. Long cells still expose
-    # full values through tooltips.
+    # Per-tab table widths tuned for a horizontal-scroll table.  Do not
+    # stretch/squeeze the text columns into the current viewport; RAMDetect
+    # already has a horizontal scrollbar, so the cleaner forensic-table design
+    # is to keep every column readable and allow horizontal scrolling.
     _COL_WIDTHS = {
-        # Processes: ImageFileName column is export-only and hidden in the UI.
-        0: [80, 1, 250, 80, 360, 90, 100, 155, 360],
-        1: [80, 80, 260, 280, 170, 155, 360],
-        # DLLs: Process column is export-only and hidden in the UI.
-        2: [80, 1, 260, 390, 190, 95, 90, 90,
-            86, 86, 86, 112, 112, 112, 150, 140, 155, 300],
-        3: [145, 420, 80, 210, 155, 380],
-        4: [220, 430, 200, 170, 170, 170, 95, 155, 360],
+        # Processes: ImageFileName is export-only and hidden in the UI.
+        # Visible order: PID, Process Name, PPID, Path, Threads, Handles,
+        # Status, Confidence, Anomaly.  Path is intentionally moderate;
+        # full paths remain available by tooltip and horizontal scrolling.
+        0: [82, 1, 240, 82, 340, 92, 104, 180, 220, 260],
+
+        # Threads: keep hexadecimal start address readable without wasting space.
+        1: [90, 90, 230, 280, 150, 180, 320],
+
+        # DLLs: Process is export-only and hidden in the UI.  DLL path is long,
+        # but not allowed to dominate the whole table.
+        2: [88, 1, 240, 420, 165, 110, 90, 100,
+            90, 90, 90, 120, 120, 120, 150, 140, 180, 300],
+
+        # Handles: object names/paths stay readable with horizontal scrolling.
+        3: [150, 520, 88, 230, 180, 300],
+
+        # PE Sections / injection evidence.
+        4: [240, 260, 210, 170, 150, 220, 100, 180, 300],
     }
 
-    # Stretch one explanation/text-heavy column on wider screens.
-    _STRETCH_COLS = {
-        0: [8],
-        1: [6],
-        3: [5],
-        4: [8],
+    _LEFT_ALIGN_HEADERS = {
+        "Process Name", "ImageFileName", "Process", "Path", "DLL Name",
+        "Handle Name", "Section", "Start Address", "Base Address",
+        "Virtual Addr", "Virtual Size", "Raw Size", "State",
+        "Permissions", "Confidence", "Anomaly", "ldr_source",
+    }
+
+    _CENTER_ALIGN_HEADERS = {
+        "PID", "PPID", "TID", "Threads", "Handles", "Size", "Signed",
+        "Entropy", "in_load", "in_mem", "in_init", "not_in_load",
+        "not_in_mem", "not_in_init", "ldr_lists_complete", "Status",
+        "Type",
     }
 
     def _reset_table(self, headers: list, narrow_cols: list, status_col: int):
@@ -1314,34 +1791,49 @@ class ArtifactsViewerPage(QWidget):
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
 
-        # Header tooltips help beginner users understand each recovered field.
+        hh = self.table.horizontalHeader()
+        hh.setStretchLastSection(False)
+        hh.setMinimumSectionSize(64)
+        hh.setSectionsMovable(False)
+        hh.setDefaultAlignment(Qt.AlignCenter)
+
+        # Header tooltips and alignment.  Keep header text centred while the
+        # cells below use per-column alignment rules.
         for c, header in enumerate(headers):
             item = self.table.horizontalHeaderItem(c)
             if item:
                 clean_header = header.rstrip(" ▲▼")
                 item.setToolTip(_HEADER_TIPS.get(clean_header, clean_header))
+                item.setTextAlignment(Qt.AlignCenter)
 
         for c in range(len(headers) + 1):
             self.table.setItemDelegateForColumn(c, None)
         self.table.setItemDelegateForColumn(status_col, self._status_delegate)
 
-        hh = self.table.horizontalHeader()
-        hh.setStretchLastSection(False)
-        hh.setMinimumSectionSize(56)
-
+        # Use explicit widths only.  No Stretch columns here, because Stretch
+        # forces Qt to compress long forensic fields into the visible viewport
+        # and causes clipped headers/cells.  Horizontal scrolling is intentional.
         for c in range(len(headers)):
             hh.setSectionResizeMode(c, QHeaderView.Interactive)
 
         widths = self._COL_WIDTHS.get(self._active_tab, [])
-        for c, w in enumerate(widths[:len(headers)]):
-            self.table.setColumnWidth(c, w)
+        for c in range(len(headers)):
+            width = widths[c] if c < len(widths) else 160
+            if width <= 0:
+                width = 1
+            self.table.setColumnWidth(c, width)
+            try:
+                hh.resizeSection(c, width)
+            except Exception:
+                pass
 
         if 0 <= status_col < len(headers):
-            self.table.setColumnWidth(status_col, max(self.table.columnWidth(status_col), 155))
-
-        for c in self._STRETCH_COLS.get(self._active_tab, []):
-            if c < len(headers):
-                hh.setSectionResizeMode(c, QHeaderView.Stretch)
+            status_width = max(self.table.columnWidth(status_col), 220)
+            self.table.setColumnWidth(status_col, status_width)
+            try:
+                hh.resizeSection(status_col, status_width)
+            except Exception:
+                pass
 
         # Reset visibility; specific tab builders may hide export-only columns.
         for c in range(len(headers)):
@@ -1353,6 +1845,8 @@ class ArtifactsViewerPage(QWidget):
                 self._sort_col, Qt.Horizontal,
                 headers[self._sort_col] + arrow,
             )
+
+        QTimer.singleShot(0, self._sync_artifact_scrollbar)
 
     def _build_pid_name_map(self) -> dict:
         pid_map: dict = {}
@@ -1374,6 +1868,7 @@ class ArtifactsViewerPage(QWidget):
          2: self._show_dlls,
          3: self._show_handles,
          4: self._show_pe_sections}[self._active_tab]()
+        QTimer.singleShot(0, self._sync_artifact_scrollbar)
 
     # ── Processes ─────────────────────────────────────────────────────────────
 
@@ -1436,13 +1931,15 @@ class ArtifactsViewerPage(QWidget):
             self._status_item(row, 7, status)
             conf_label = _j10_conf_label(p)
             conf_col = "#fbbf24" if "Low-confidence" in conf_label else ("#93c5fd" if "Medium" in conf_label else "#34d399")
-            self._si(row, 8, conf_label, conf_col, bold=True, small=True)
+            self._si(row, 8, conf_label, conf_col, bold=False, small=True)
             if self.table.item(row, 8):
                 self.table.item(row, 8).setToolTip(_compact_tooltip(_j10_conf_tooltip(p), limit=900))
             anom = _proc_anomaly(p)
-            self._si(row, 9, anom, "#f87171" if anom!="-" else "#475569", bold=anom!="-")
+            self._si(row, 9, anom, "#f87171" if anom!="-" else "#475569", bold=False)
             if anom != "-" and self.table.item(row, 9):
                 self.table.item(row, 9).setToolTip(_anomaly_tooltip(anom))
+            if is_susp:
+                self._apply_suspicious_row_text(row, status_col=7)
 
         self._show_empty_if(not flat and not sess.processes)
 
@@ -1488,6 +1985,8 @@ class ArtifactsViewerPage(QWidget):
             self._si(row, 6, anom, "#f87171" if anom!="-" else "#475569", bold=anom!="-")
             if anom != "-" and self.table.item(row, 6):
                 self.table.item(row, 6).setToolTip(_anomaly_tooltip(anom))
+            if is_susp:
+                self._apply_suspicious_row_text(row, status_col=5)
 
         self._show_empty_if(not data and not sess.threads)
 
@@ -1598,6 +2097,8 @@ class ArtifactsViewerPage(QWidget):
                      "#f87171" if anom_str!="-" else "#475569", bold=anom_str!="-")
             if anom_str != "-" and self.table.item(row, 17):
                 self.table.item(row, 17).setToolTip(_anomaly_tooltip(anom_str))
+            if is_susp:
+                self._apply_suspicious_row_text(row, status_col=16)
 
         self._show_empty_if(not data and not sess.dlls)
 
@@ -1640,6 +2141,8 @@ class ArtifactsViewerPage(QWidget):
                      "#f87171" if anom_str!="-" else "#475569", bold=anom_str!="-")
             if anom_str != "-" and self.table.item(row, 5):
                 self.table.item(row, 5).setToolTip(_anomaly_tooltip(anom_str))
+            if is_susp:
+                self._apply_suspicious_row_text(row, status_col=4)
 
         self._show_empty_if(not data and not sess.handles)
 
@@ -1729,6 +2232,8 @@ class ArtifactsViewerPage(QWidget):
                      "#f87171" if str(anom)!="-" else "#475569", bold=str(anom)!="-")
             if str(anom) != "-" and self.table.item(row, 8):
                 self.table.item(row, 8).setToolTip(_anomaly_tooltip(str(anom)))
+            if is_susp:
+                self._apply_suspicious_row_text(row, status_col=7)
 
         self._show_empty_if(not data)
 
@@ -1740,6 +2245,20 @@ class ArtifactsViewerPage(QWidget):
     _F_MONO   = QFont("Courier New", 12)
     _F_SMALL  = QFont("Courier New", 10)
 
+    def _header_name_for_col(self, col: int) -> str:
+        item = self.table.horizontalHeaderItem(col) if self.table else None
+        if item is None:
+            return ""
+        return item.text().rstrip(" ▲▼")
+
+    def _cell_alignment_for_col(self, col: int):
+        header = self._header_name_for_col(col)
+        if header in self._LEFT_ALIGN_HEADERS:
+            return Qt.AlignLeft | Qt.AlignVCenter
+        if header in self._CENTER_ALIGN_HEADERS:
+            return Qt.AlignCenter
+        return Qt.AlignLeft | Qt.AlignVCenter
+
     def _si(self, row:int, col:int, text:str,
             color:str="#e2e8f0", mono:bool=False,
             bold:bool=False, small:bool=False, tip:bool=False):
@@ -1747,7 +2266,8 @@ class ArtifactsViewerPage(QWidget):
         base = self._F_SMALL if (small and mono) else (self._F_MONO if mono else self._F_NORMAL)
         f = QFont(base); f.setBold(bold)
         item.setFont(f)
-        item.setForeground(QColor(color))
+        item.setForeground(QColor(_map_color(color)))
+        item.setTextAlignment(self._cell_alignment_for_col(col))
         if tip and str(text).strip():
             item.setToolTip(_compact_tooltip(str(text)))
         self.table.setItem(row, col, item)
@@ -1763,6 +2283,25 @@ class ArtifactsViewerPage(QWidget):
             )
         item.setBackground(QBrush(QColor(0, 0, 0, 0)))
         self.table.setItem(row, col, item)
+
+    def _apply_suspicious_row_text(self, row: int, status_col: int | None = None):
+        """Colour suspicious row text red without making the whole row bold.
+
+        This is display-only emphasis. The Status badge is still painted by the
+        delegate, and no artifact data, export data, or ML result is changed.
+        """
+        red = '#ff6b6b' if not _is_light() else '#dc2626'
+        for c in range(self.table.columnCount()):
+            if status_col is not None and c == status_col:
+                continue
+            item = self.table.item(row, c)
+            if item is None:
+                continue
+            item.setForeground(QBrush(QColor(red)))
+            item.setData(Qt.ForegroundRole, QBrush(QColor(red)))
+            f = QFont(item.font())
+            f.setBold(False)
+            item.setFont(f)
 
     def _show_empty_if(self, condition:bool):
         if condition:
@@ -2006,6 +2545,13 @@ class ArtifactsViewerPage(QWidget):
     def _show_export_choice_dialog(self):
         """Small RAMDetect-themed chooser for current-tab export format."""
         current_tab = TABS[self._active_tab]
+        p = _palette()
+        light = _is_light()
+        card_bg = '#ffffff' if light else '#0f172a'
+        card_border = p['border2'] if light else '#0e7490'
+        btn_bg = p['panel'] if light else '#1e293b'
+        btn_border = p['border2'] if light else '#334155'
+        hover_bg = p['selected'] if light else '#164e63'
 
         dlg = QDialog(self)
         dlg.setModal(True)
@@ -2020,11 +2566,7 @@ class ArtifactsViewerPage(QWidget):
         card = QFrame()
         card.setObjectName("exportChoiceCard")
         card.setStyleSheet(
-            "QFrame#exportChoiceCard {"
-            " background: #0f172a;"
-            " border: 1px solid rgba(6,182,212,0.38);"
-            " border-radius: 14px;"
-            "}"
+            f"QFrame#exportChoiceCard {{ background:{card_bg}; border:1px solid {card_border}; border-radius:14px; }}"
             "QLabel { background: transparent; border: none; }"
         )
         outer.addWidget(card)
@@ -2033,24 +2575,20 @@ class ArtifactsViewerPage(QWidget):
         root.setContentsMargins(20, 16, 20, 18)
         root.setSpacing(14)
 
-        # Header
         header = QHBoxLayout()
         header.setSpacing(8)
 
         title = QLabel("Export Current Tab")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #ffffff;")
+        set_tone(title, p['text'])
         header.addWidget(title, 1)
 
         close_btn = QPushButton("×")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setFixedSize(28, 28)
         close_btn.setStyleSheet(
-            "QPushButton {"
-            " background: transparent; color: #cbd5e1; border: none;"
-            " border-radius: 14px; font-size: 20px; font-weight: 700; padding: 0px;"
-            "}"
-            "QPushButton:hover { background: rgba(239,68,68,0.18); color: white; }"
+            f"background:transparent;color:{p['muted']};border:0px solid transparent;"
+            "border-radius:14px;font-size:20px;font-weight:700;padding:0px;"
         )
         close_btn.clicked.connect(dlg.reject)
         header.addWidget(close_btn)
@@ -2058,82 +2596,37 @@ class ArtifactsViewerPage(QWidget):
 
         subtitle = QLabel(f"Choose an export format for: {current_tab}")
         subtitle.setFont(QFont("Segoe UI", 10))
-        subtitle.setStyleSheet("color: #94a3b8;")
+        set_tone(subtitle, p['muted'])
         root.addWidget(subtitle)
 
-        # Choices
         choices = QHBoxLayout()
         choices.setSpacing(12)
+
+        btn_qss = (
+            f"background-color:{btn_bg};color:{p['text']};border:1px solid {btn_border};"
+            "border-radius:12px;font-size:11px;font-weight:700;text-align:center;"
+        )
 
         csv_btn = QPushButton("⬇  CSV\nRaw table data")
         csv_btn.setCursor(Qt.PointingHandCursor)
         csv_btn.setFixedSize(178, 78)
-        csv_btn.setStyleSheet(
-            "QPushButton {"
-            " background: rgba(30,41,59,0.72);"
-            " color: #e2e8f0;"
-            " border: 1px solid rgba(51,65,85,0.75);"
-            " border-radius: 12px;"
-            " font-size: 11px;"
-            " font-weight: 700;"
-            " text-align: center;"
-            "}"
-            "QPushButton:hover {"
-            " background: rgba(6,182,212,0.20);"
-            " border: 1px solid rgba(103,232,249,0.65);"
-            " color: #67e8f9;"
-            "}"
-            "QPushButton:pressed {"
-            " background: rgba(8,145,178,0.28);"
-            " border: 1px solid rgba(6,182,212,0.80);"
-            " color: #ffffff;"
-            "}"
-        )
+        csv_btn.setStyleSheet(btn_qss)
         choices.addWidget(csv_btn)
 
         xlsx_btn = QPushButton("📄  XLSX\nThemed workbook")
         xlsx_btn.setCursor(Qt.PointingHandCursor)
         xlsx_btn.setFixedSize(178, 78)
-        xlsx_btn.setStyleSheet(
-            "QPushButton {"
-            " background: rgba(30,41,59,0.72);"
-            " color: #e2e8f0;"
-            " border: 1px solid rgba(51,65,85,0.75);"
-            " border-radius: 12px;"
-            " font-size: 11px;"
-            " font-weight: 700;"
-            " text-align: center;"
-            "}"
-            "QPushButton:hover {"
-            " background: rgba(6,182,212,0.20);"
-            " border: 1px solid rgba(103,232,249,0.65);"
-            " color: #67e8f9;"
-            "}"
-            "QPushButton:pressed {"
-            " background: rgba(8,145,178,0.28);"
-            " border: 1px solid rgba(6,182,212,0.80);"
-            " color: #ffffff;"
-            "}"
-        )
+        xlsx_btn.setStyleSheet(btn_qss)
         choices.addWidget(xlsx_btn)
         root.addLayout(choices)
 
         note = QLabel("CSV is lightweight. XLSX keeps the RAMDetect report theme.")
         note.setFont(QFont("Segoe UI", 9))
-        note.setStyleSheet("color: #64748b;")
-        note.setAlignment(Qt.AlignCenter)
+        note.setStyleSheet(f"color:{p['muted']};background:transparent;border:none;")
         root.addWidget(note)
 
-        def do_csv():
-            dlg.accept()
-            self._export_csv()
-
-        def do_xlsx():
-            dlg.accept()
-            self._export_excel_current()
-
-        csv_btn.clicked.connect(do_csv)
-        xlsx_btn.clicked.connect(do_xlsx)
+        csv_btn.clicked.connect(lambda: (dlg.accept(), self._export_csv()))
+        xlsx_btn.clicked.connect(lambda: (dlg.accept(), self._export_excel_current()))
 
         try:
             parent_geo = self.window().frameGeometry()
@@ -2301,7 +2794,63 @@ class ArtifactsViewerPage(QWidget):
                 self._apply_row_filter(prev_search)
 
 
+    def apply_theme(self, theme: str | None = None) -> None:
+        if hasattr(self, '_tab_btns'):
+            self._refresh_tab_styles()
+        if hasattr(self, '_susp_btn'):
+            self._susp_btn.setStyleSheet(self._susp_style(self._susp_only))
+        if hasattr(self, '_search_frame'):
+            self._search_frame.setStyleSheet(f"QFrame{{background:{_palette()['panel']};border:1px solid {_palette()['border2']};border-radius:9px;}}")
+        if hasattr(self, 'search'):
+            self.search.setStyleSheet(
+                f"QLineEdit{{background:transparent;border:none;color:{_palette()['text']};font-size:12px;}}"
+                f"QLineEdit::placeholder{{color:{_palette()['disabled']};}}"
+            )
+        if hasattr(self, '_export_btn'):
+            self._export_btn.setStyleSheet(
+                f"background-color:{_palette()['panel']};border:1px solid {_palette()['border']};border-radius:9px;"
+                f"color:{_palette()['text2']};padding-top:0px;padding-bottom:0px;padding-left:14px;padding-right:14px;font-size:12px;font-weight:700;"
+            )
+        if hasattr(self, '_xlsx_btn'):
+            self._xlsx_btn.setStyleSheet(
+                f"background-color:{'#eef4ff' if _is_light() else '#083344'};"
+                f"border:1px solid {_palette()['accent']};border-radius:9px;color:{_palette()['accent']};"
+                "padding-top:0px;padding-bottom:0px;padding-left:12px;padding-right:12px;font-size:12px;font-weight:700;"
+            )
+        if hasattr(self, '_table_card'):
+            self._table_card.setStyleSheet(
+                f"QFrame#ArtifactTableCard{{background-color:{_palette()['card']};border:1px solid {_palette()['border']};border-radius:14px;}}"
+            )
+        if hasattr(self, 'table'):
+            row_bg = _palette()['card']
+            self.table.setStyleSheet(
+                f"QTableWidget{{background:{row_bg};border:none;selection-background-color:{_palette()['selected']};selection-color:{_palette()['text']};margin:0px;padding:0px;}}"
+                f"QTableCornerButton::section{{background:{_palette()['header']};border:none;}}"
+                f"QTableWidget::item{{background:{row_bg};padding:6px 14px;border:none;border-bottom:1px solid {_palette()['border']};}}"
+                f"QTableWidget::item:hover{{background:{_palette()['hover']};}}"
+                f"QTableWidget::item:selected{{background:{_palette()['selected']};color:{_palette()['text']};}}"
+                "QTableWidget::item:focus{border:none;}"
+            )
+            self.table.viewport().setStyleSheet(f"background:{row_bg};border:none;")
+            self.table.horizontalHeader().setStyleSheet(
+                "QHeaderView{background:transparent;border:none;}"
+                f"QHeaderView::section{{background:transparent;color:{_palette()['muted']};"
+                f"padding-top:11px;padding-bottom:11px;padding-left:14px;padding-right:14px;"
+                f"border:none;border-bottom:1px solid {_palette()['border']};border-radius:0px;}}"
+                f"QHeaderView::section:hover{{background:{_palette()['hover']};color:{_palette()['accent']};}}"
+            )
+            self.table.horizontalScrollBar().setStyleSheet(_scrollbar_qss())
+            if hasattr(self, '_artifact_vscroll'):
+                self._artifact_vscroll.setStyleSheet(_scrollbar_qss())
+            if hasattr(self, '_artifact_hscroll'):
+                self._artifact_hscroll.setStyleSheet(_scrollbar_qss())
+            if hasattr(self, '_table_border_overlay'):
+                self._table_border_overlay.update()
+            if hasattr(self, '_table_header_gutter'):
+                self._table_header_gutter.update()
+            self._populate_table()
+            QTimer.singleShot(0, self._sync_artifact_scrollbar)
+
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh_tab_styles()
-        self._populate_table()
+        self.apply_theme(current_theme())

@@ -1,6 +1,7 @@
 """Base page class with common layout."""
 from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from ui.widgets.header_bar import HeaderBar
+from ui.style_helpers import set_role, set_tone
 
 
 class BasePage(QWidget):
@@ -26,7 +27,7 @@ class BasePage(QWidget):
         self._root.addWidget(self._header)
 
         self.body = QWidget()
-        self.body.setStyleSheet("background: transparent;")
+        set_role(self.body, "transparent")
         self._root.addWidget(self.body, 1)
 
     def showEvent(self, event):

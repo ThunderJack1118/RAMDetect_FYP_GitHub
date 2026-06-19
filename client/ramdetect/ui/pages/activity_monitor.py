@@ -24,9 +24,10 @@ import os
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from ui.style_helpers import set_role, set_tone
 
-from PyQt5.QtCore import Qt, QSortFilterProxyModel, QTimer, pyqtSignal, QUrl
-from PyQt5.QtGui import QColor, QDesktopServices, QFont, QStandardItem, QStandardItemModel
+from PyQt5.QtCore import Qt, QRectF, QSortFilterProxyModel, QTimer, pyqtSignal, QUrl
+from PyQt5.QtGui import QColor, QDesktopServices, QFont, QStandardItem, QStandardItemModel, QBitmap, QPainter
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -270,32 +271,22 @@ class _SummaryCard(QFrame):
         super().__init__(parent)
         self.setObjectName("ActivitySummaryCard")
         self.setMinimumHeight(78)
-        self.setStyleSheet("""
-            QFrame#ActivitySummaryCard {
-                background: rgba(30, 41, 59, 0.45);
-                border: 1px solid rgba(51, 65, 85, 0.55);
-                border-radius: 12px;
-            }
-            QLabel {
-                background: transparent;
-                border: none;
-            }
-        """)
+        self.setStyleSheet(_summary_card_qss())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(2)
 
         self._title = QLabel(title)
         self._title.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-        self._title.setStyleSheet("color: #94a3b8;")
+        set_tone(self._title, _summary_title_tone())
 
         self._value = QLabel(value)
         self._value.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        self._value.setStyleSheet("color: #f8fafc;")
+        set_tone(self._value, _summary_value_tone())
 
         self._subtitle = QLabel(subtitle)
         self._subtitle.setFont(QFont("Segoe UI", 8))
-        self._subtitle.setStyleSheet("color: #64748b;")
+        set_tone(self._subtitle, _summary_subtitle_tone())
 
         layout.addWidget(self._title)
         layout.addWidget(self._value)
@@ -316,92 +307,7 @@ class _DownloadSuccessDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(610)
         self.setMaximumWidth(760)
-        self.setStyleSheet("""
-            QDialog {
-                background: #0f172a;
-                color: #e2e8f0;
-                font-family: 'Segoe UI';
-            }
-            QLabel {
-                background: transparent;
-                border: none;
-                color: #e2e8f0;
-            }
-            QLabel#InfoIcon {
-                background: #075985;
-                color: #e0f2fe;
-                border: 1px solid #06b6d4;
-                border-radius: 20px;
-                font-size: 20px;
-                font-weight: 900;
-            }
-            QLabel#DialogTitle {
-                color: #f8fafc;
-                font-size: 13px;
-                font-weight: 700;
-            }
-            QLabel#DialogLabel {
-                color: #9fb0cc;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            QLabel#FileNameLabel {
-                color: #dbeafe;
-                font-size: 12px;
-                font-weight: 600;
-                background: #111827;
-                border: 1px solid #26334d;
-                border-radius: 8px;
-                padding: 8px 10px;
-            }
-            QTextEdit#PathDetails {
-                background: #0b1220;
-                color: #dbeafe;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 8px;
-                font-size: 11px;
-                selection-background-color: #0e7490;
-            }
-            QPushButton#DialogPrimaryButton {
-                background: #334155;
-                color: #f8fafc;
-                border: 1px solid #64748b;
-                border-radius: 8px;
-                padding: 8px 22px;
-                font-size: 12px;
-                font-weight: 800;
-                min-width: 82px;
-            }
-            QPushButton#DialogPrimaryButton:hover {
-                background: #0891b2;
-                border: 1px solid #22d3ee;
-                color: #ffffff;
-            }
-            QPushButton#DialogPrimaryButton:pressed {
-                background: #0e7490;
-                border: 1px solid #67e8f9;
-            }
-            QPushButton#DialogSecondaryButton {
-                background: #172033;
-                color: #dbeafe;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 12px;
-                font-weight: 800;
-                min-width: 132px;
-            }
-            QPushButton#DialogSecondaryButton:hover {
-                background: #1e3a5f;
-                border: 1px solid #38bdf8;
-                color: #ffffff;
-            }
-            QPushButton#DialogSecondaryButton:pressed {
-                background: #075985;
-                border: 1px solid #67e8f9;
-            }
-        """)
+        self.setStyleSheet(_download_success_dialog_qss())
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 14)
@@ -469,6 +375,10 @@ class _DownloadSuccessDialog(QDialog):
 
 
 
+def _activity_default_text() -> str:
+    return "#1e3a6e" if _is_light() else "#dbeafe"
+
+
 class _LogTableModel(QStandardItemModel):
     def __init__(self, columns: list[tuple[str, str, int]], parent=None):
         super().__init__(parent)
@@ -500,14 +410,83 @@ class _LogTableModel(QStandardItemModel):
                 item.setEditable(False)
                 item.setData(raw_val, Qt.UserRole)
                 item.setToolTip(raw_val if raw_val else val)
+                item.setForeground(QColor(_activity_default_text()))
                 if key == "action":
-                    item.setForeground(QColor(_ACTION_COLOURS.get(raw_val, "#cbd5e1")))
+                    item.setForeground(QColor(_ACTION_COLOURS.get(raw_val, _activity_default_text())))
                     item.setFont(_bold())
                 elif key == "verdict" and val.upper() in _VERDICT_COLOURS:
                     item.setForeground(QColor(_VERDICT_COLOURS[val.upper()]))
                     item.setFont(_bold())
                 items.append(item)
             self.appendRow(items)
+
+
+def _admin_table_border_colour() -> str:
+    return "#7fa7ea" if _is_light() else "#536684"
+
+
+def _apply_rounded_table_mask(widget: QWidget, radius: int = 12) -> None:
+    """Clip QTableView children to the same radius as the visible table border."""
+    try:
+        if widget is None or widget.width() <= 2 or widget.height() <= 2:
+            return
+        mask = QBitmap(widget.size())
+        mask.fill(Qt.color0)
+        painter = QPainter(mask)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(Qt.color1)
+        painter.drawRoundedRect(mask.rect(), radius, radius)
+        painter.end()
+        widget.setMask(mask)
+    except Exception:
+        try:
+            widget.clearMask()
+        except Exception:
+            pass
+
+
+class _AdminTableBorderOverlay(QWidget):
+    """Paint the rounded admin table border above the header/table children.
+
+    QHeaderView and the table viewport are separate child widgets.  If the
+    border is drawn only by QSS, those children can cover the outer edge and
+    make the four rounded corners look missing.  This transparent overlay keeps
+    the table border visible without changing table data or sorting behaviour.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        # Do not custom-paint on a transparent child widget.  The table view QSS
+        # now owns the visible border.  Painting here caused repeated Qt
+        # "paintEngine / painter not active" warnings when pages were opened.
+        return super().paintEvent(event)
+
+
+class _RoundedLogTableView(QTableView):
+    """QTableView with rounded clipping and a visible admin table outline."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._border_overlay = None
+
+    def _sync_border_overlay(self):
+        # Clip header/viewport/row painting to the table radius. This removes
+        # sharp row/header rectangles at the rounded outer table corners without
+        # using a custom paintEvent overlay.
+        _apply_rounded_table_mask(self, 12)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_border_overlay()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_border_overlay()
 
 
 class _LogTable(QWidget):
@@ -522,7 +501,7 @@ class _LogTable(QWidget):
         self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self._proxy.setFilterKeyColumn(-1)
 
-        self._view = QTableView(self)
+        self._view = _RoundedLogTableView(self)
         self._view.setModel(self._proxy)
         self._view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._view.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -532,7 +511,7 @@ class _LogTable(QWidget):
         header = self._view.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.Fixed)
-        self._view.setAlternatingRowColors(True)
+        self._view.setAlternatingRowColors(False)
         self._view.setWordWrap(False)
         self._view.setTextElideMode(Qt.ElideMiddle)
         self._view.setShowGrid(False)
@@ -679,8 +658,9 @@ class ActivityMonitorPage(QWidget):
             # Analysis History is based on RAMDetect scan_history.json/full session snapshots,
             # so it matches the Dashboard Recent Analysis History rather than depending only
             # on audit_logs. Audit analysis events still remain visible in Full Audit Trail.
-            analysis_rows = self._load_scan_history_rows(username_filter=username_filter)
+            analysis_rows = self._load_analysis_audit_rows(username_filter=username_filter)
             file_rows = al.get_logs(action_filter=FILE_ACCESS_ACTIONS, username_filter=username_filter)
+            file_rows = self._merge_analysis_dump_access_rows(file_rows, analysis_rows)
             report_rows = al.get_logs(action_filter=REPORT_ACTIONS, username_filter=username_filter)
             report_rows = self._merge_shared_repository_rows(report_rows, username_filter=username_filter)
             all_rows = al.get_logs(username_filter=username_filter)
@@ -734,7 +714,7 @@ class ActivityMonitorPage(QWidget):
         root.addWidget(self._tabs, 1)
 
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self._status_label.setStyleSheet(_status_text_qss())
         root.addWidget(self._status_label)
 
     def _make_header(self) -> QWidget:
@@ -754,9 +734,13 @@ class ActivityMonitorPage(QWidget):
         title_box.setSpacing(2)
 
         title = QLabel("Activity Monitor")
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: #f8fafc;")
+        title.setObjectName("AdminPageTitle")
+        title.setStyleSheet(_header_title_qss())
         subtitle = QLabel("Staff usage, login activity, file access, analysis history, and audit trail")
-        subtitle.setStyleSheet("font-size: 12px; color: #9fb0cc;")
+        subtitle.setObjectName("AdminPageSubtitle")
+        subtitle.setStyleSheet(_header_subtitle_qss())
+        self._header_title_label = title
+        self._header_subtitle_label = subtitle
 
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
@@ -766,15 +750,7 @@ class ActivityMonitorPage(QWidget):
         self._role_badge.setAlignment(Qt.AlignCenter)
         self._role_badge.setMinimumHeight(42)
         self._role_badge.setMinimumWidth(150)
-        self._role_badge.setStyleSheet(
-            "background:#052e1a;"
-            "color:#22c55e;"
-            "border:1px solid #166534;"
-            "border-radius:12px;"
-            "padding:8px 14px;"
-            "font-size:12px;"
-            "font-weight:800;"
-        )
+        self._role_badge.setStyleSheet(_access_badge_qss())
         h.addWidget(self._role_badge)
 
         return card
@@ -895,6 +871,158 @@ class ActivityMonitorPage(QWidget):
         except Exception as exc:
             log.debug("PTM/shared repository scan unavailable: %s", exc)
             return report_rows
+
+
+
+    def _load_analysis_audit_rows(self, username_filter: str | None = None) -> list[dict]:
+        """
+        Load Analysis History from audit activity events.
+
+        This makes the Analysis History tab consistent with the Full Audit Trail.
+        It is especially important for Admin workstations because completed
+        analyses from analyst clients are synced as central audit events.
+        """
+        rows: list[dict] = []
+
+        try:
+            from ramdetect.case_management.activity_logger import ActivityLogger, ANALYSIS_ACTIONS
+
+            logs = ActivityLogger.instance().get_logs(
+                action_filter=ANALYSIS_ACTIONS,
+                username_filter=username_filter,
+                limit=1000,
+            )
+
+            for row in logs:
+                details = {}
+                raw = row.get("details_json") or ""
+                if isinstance(raw, dict):
+                    details = raw
+                elif raw:
+                    try:
+                        details = json.loads(raw)
+                    except Exception:
+                        details = {}
+
+                dump_path = (
+                    row.get("file_path")
+                    or details.get("dump_path")
+                    or details.get("source_dump_path")
+                    or ""
+                )
+
+                dump_name = (
+                    row.get("file_name")
+                    or details.get("dump")
+                    or details.get("dump_name")
+                    or (Path(dump_path).name if dump_path else "")
+                )
+
+                session_id = (
+                    details.get("session_id")
+                    or details.get("source_session_id")
+                    or row.get("analysis_session_id")
+                    or ""
+                )
+
+                score = (
+                    details.get("hybrid_score")
+                    or details.get("rf_score")
+                    or details.get("score")
+                    or ""
+                )
+
+                score_s = ""
+                if score not in ("", None):
+                    try:
+                        score_f = float(score)
+                        if score_f <= 1.0:
+                            score_f *= 100.0
+                        score_s = f"{score_f:.2f}%"
+                    except Exception:
+                        score_s = str(score)
+
+                rows.append({
+                    "timestamp": row.get("timestamp", ""),
+                    "username": row.get("username", "") or "unknown",
+                    "role": row.get("role", "") or "unknown",
+                    "machine_name": row.get("machine_name", "") or "unknown",
+                    "action": row.get("action", ""),
+                    "session_id": str(session_id or ""),
+                    "file_name": dump_name,
+                    "verdict": str(row.get("verdict", "") or details.get("verdict", "") or "").upper(),
+                    "hybrid_score": score_s,
+                    "size": details.get("dump_size") or details.get("size") or "",
+                    "session_file": details.get("session_file") or "",
+                    "session_folder": details.get("session_folder") or "",
+                    "dump_path": dump_path,
+                })
+
+        except Exception as exc:
+            log.warning("Failed to load analysis audit rows: %s", exc)
+
+        # If there are no audit rows, keep old local scan-history fallback.
+        if not rows:
+            return self._load_scan_history_rows(username_filter=username_filter)
+
+        return rows
+
+
+    def _merge_analysis_dump_access_rows(self, file_rows: list[dict], analysis_rows: list[dict]) -> list[dict]:
+        """
+        Ensure File Access shows dump files used during analysis.
+
+        Some workflows record dump usage through ANALYSIS_STARTED /
+        ANALYSIS_COMPLETED instead of a separate DUMP_SELECTED or DUMP_IMPORTED
+        event. This method derives one dump-access row per analysed dump/session.
+        """
+        merged = list(file_rows)
+        seen = set()
+
+        for row in merged:
+            key = (
+                str(row.get("file_name", "")).lower(),
+                str(row.get("file_path", "")).lower(),
+            )
+            seen.add(key)
+
+        added_sessions = set()
+
+        for row in analysis_rows:
+            action = str(row.get("action", "") or "")
+            if action not in {"ANALYSIS_STARTED", "ANALYSIS_COMPLETED", "ANALYSIS_FAILED"}:
+                continue
+
+            dump_path = str(row.get("dump_path", "") or "")
+            dump_name = str(row.get("file_name", "") or (Path(dump_path).name if dump_path else ""))
+
+            if not dump_name and not dump_path:
+                continue
+
+            session_id = str(row.get("session_id", "") or "")
+            session_key = session_id or dump_name.lower() or dump_path.lower()
+
+            if session_key in added_sessions:
+                continue
+
+            key = (dump_name.lower(), dump_path.lower())
+            if key in seen:
+                continue
+
+            merged.append({
+                "timestamp": row.get("timestamp", ""),
+                "username": row.get("username", "") or "unknown",
+                "machine_name": row.get("machine_name", "") or "unknown",
+                "action": "DUMP_IMPORTED",
+                "file_name": dump_name,
+                "file_path": dump_path,
+                "file_hash": "",
+            })
+
+            seen.add(key)
+            added_sessions.add(session_key)
+
+        return sorted(merged, key=lambda r: _sort_timestamp(r.get("timestamp", "")), reverse=True)
 
 
     def _load_scan_history_rows(self, username_filter: str | None = None) -> list[dict]:
@@ -1313,50 +1441,7 @@ class ActivityMonitorPage(QWidget):
             dialog.setModal(True)
             dialog.resize(580, 260)
 
-            dialog.setStyleSheet("""
-                QDialog {
-                    background-color: #0f172a;
-                    color: #e5eefc;
-                }
-                QLabel#Title {
-                    color: #f8fafc;
-                    font-size: 18px;
-                    font-weight: 800;
-                }
-                QLabel#Body {
-                    color: #dbeafe;
-                    font-size: 13px;
-                }
-                QTextEdit {
-                    background-color: #111c2e;
-                    color: #dbeafe;
-                    border: 1px solid #334155;
-                    border-radius: 10px;
-                    padding: 8px;
-                    selection-background-color: #0891b2;
-                }
-                QPushButton {
-                    background-color: #1e293b;
-                    color: #f8fafc;
-                    border: 1px solid #334155;
-                    border-radius: 10px;
-                    padding: 8px 18px;
-                    font-weight: 700;
-                }
-                QPushButton:hover {
-                    background-color: #26364d;
-                    border: 1px solid #22d3ee;
-                    color: #ffffff;
-                }
-                QPushButton#PrimaryButton {
-                    background-color: #0891b2;
-                    border: 1px solid #22d3ee;
-                }
-                QPushButton#PrimaryButton:hover {
-                    background-color: #06b6d4;
-                    border: 1px solid #67e8f9;
-                }
-            """)
+            dialog.setStyleSheet(_activity_workbook_dialog_qss())
 
             root = QVBoxLayout(dialog)
             root.setContentsMargins(22, 18, 22, 18)
@@ -1460,28 +1545,12 @@ class ActivityMonitorPage(QWidget):
                 self._role_badge.setText("●  Admin Access")
                 self._role_badge.setMinimumHeight(42)
                 self._role_badge.setMinimumWidth(150)
-                self._role_badge.setStyleSheet(
-                    "background:#052e1a;"
-                    "color:#22c55e;"
-                    "border:1px solid #166534;"
-                    "border-radius:12px;"
-                    "padding:8px 14px;"
-                    "font-size:12px;"
-                    "font-weight:800;"
-                )
+                self._role_badge.setStyleSheet(_access_badge_qss())
             else:
                 self._role_badge.setText("Admin Access" if is_admin else f"{username}  [{role}]")
                 self._role_badge.setMinimumHeight(42)
                 self._role_badge.setMinimumWidth(150)
-                self._role_badge.setStyleSheet(
-                    "background:#0f172a;"
-                    "color:#cbd5e1;"
-                    "border:1px solid #334155;"
-                    "border-radius:12px;"
-                    "padding:8px 14px;"
-                    "font-size:12px;"
-                    "font-weight:700;"
-                )
+                self._role_badge.setStyleSheet(_role_badge_readonly_qss())
         except Exception:
             pass
 
@@ -1524,11 +1593,177 @@ class ActivityMonitorPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._apply_theme_styles()
         self._populate_user_combo()
         self.refresh()
 
+    def _apply_theme_styles(self) -> None:
+        """Re-apply page-local styles after live Light/Dark theme changes."""
+        try:
+            self.setStyleSheet(_page_qss())
+            if hasattr(self, "_tabs"):
+                self._tabs.setStyleSheet(_tabs_qss())
+            for tab in (getattr(self, "_tab_login", None), getattr(self, "_tab_analysis", None),
+                        getattr(self, "_tab_files", None), getattr(self, "_tab_reports", None),
+                        getattr(self, "_tab_all", None)):
+                view = getattr(tab, "_view", None)
+                if view is not None:
+                    view.setStyleSheet(_table_qss())
+            for card in (getattr(self, "_card_logins", None), getattr(self, "_card_files", None),
+                         getattr(self, "_card_analysis", None), getattr(self, "_card_reports", None)):
+                if card is not None:
+                    card.setStyleSheet(_summary_card_qss())
+            if hasattr(self, "_header_title_label"):
+                self._header_title_label.setStyleSheet(_header_title_qss())
+            if hasattr(self, "_header_subtitle_label"):
+                self._header_subtitle_label.setStyleSheet(_header_subtitle_qss())
+            if hasattr(self, "_status_label"):
+                self._status_label.setStyleSheet(_status_text_qss())
+            if hasattr(self, "_role_badge"):
+                self._role_badge.setStyleSheet(_access_badge_qss() if self._is_admin() else _role_badge_readonly_qss())
+        except Exception:
+            pass
+
+
+
+def _active_theme() -> str:
+    try:
+        from ui.theme import current_theme
+    except Exception:
+        try:
+            from ramdetect.ui.theme import current_theme
+        except Exception:
+            return "dark"
+    try:
+        return "light" if str(current_theme()).strip().lower() == "light" else "dark"
+    except Exception:
+        return "dark"
+
+
+def _is_light() -> bool:
+    return _active_theme() == "light"
+
+
+def _summary_title_tone() -> str:
+    return "#5b73ad" if _is_light() else "#94a3b8"
+
+
+def _summary_value_tone() -> str:
+    return "#1a56db" if _is_light() else "#f8fafc"
+
+
+def _summary_subtitle_tone() -> str:
+    return "#6f83b5" if _is_light() else "#64748b"
+
+
+def _header_title_qss() -> str:
+    if _is_light():
+        return "font-size:22px;font-weight:800;color:#123b7a;background:transparent;border:none;"
+    return "font-size:22px;font-weight:800;color:#ffffff;background:transparent;border:none;"
+
+
+def _header_subtitle_qss() -> str:
+    if _is_light():
+        return "font-size:12px;color:#5570a9;background:transparent;border:none;"
+    return "font-size:12px;color:#9fb0cc;background:transparent;border:none;"
+
+
+def _status_text_qss() -> str:
+    return "color:#7b8fb8;font-size:11px;background:transparent;border:none;" if _is_light() else "color:#94a3b8;font-size:11px;background:transparent;border:none;"
+
+
+def _access_badge_qss() -> str:
+    if _is_light():
+        return (
+            "background:#ecfdf5;color:#047857;border:1px solid #86efac;"
+            "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+        )
+    return (
+        "background:#063d24;color:#4ade80;border:1px solid #22c55e;"
+        "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;"
+    )
+
+
+def _role_badge_readonly_qss() -> str:
+    if _is_light():
+        return (
+            "background:#f8fbff;color:#5570a9;border:1px solid #cfe0ff;"
+            "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:700;"
+        )
+    return (
+        "background:#0f172a;color:#cbd5e1;border:1px solid #334155;"
+        "border-radius:12px;padding:8px 14px;font-size:12px;font-weight:700;"
+    )
+
+
+def _summary_card_qss() -> str:
+    if _is_light():
+        return """
+            QFrame#ActivitySummaryCard {
+                background: #ffffff;
+                border: 1px solid #cfe0ff;
+                border-radius: 12px;
+            }
+            QLabel { background: transparent; border: none; }
+        """
+    return """
+        QFrame#ActivitySummaryCard {
+            background: rgba(30, 41, 59, 0.45);
+            border: 1px solid rgba(51, 65, 85, 0.55);
+            border-radius: 12px;
+        }
+        QLabel { background: transparent; border: none; }
+    """
+
 
 def _page_qss() -> str:
+    if _is_light():
+        return """
+            QWidget { background: #f0f5ff; color: #1e3a6e; font-family: 'Segoe UI'; }
+            QFrame#ActivityHeader, QFrame#ActivityToolbar {
+                background: #ffffff;
+                border: 1px solid #cfe0ff;
+                border-radius: 12px;
+            }
+            QLineEdit, QComboBox {
+                background: #ffffff;
+                color: #1e3a6e;
+                border: 1px solid #c7d9fb;
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:focus, QComboBox:focus { border: 1px solid #1a56db; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #1e3a6e;
+                border: 1px solid #cfe0ff;
+                selection-background-color: #eaf1ff;
+                selection-color: #1a56db;
+            }
+            QPushButton#NeutralButton {
+                background: #f8fbff;
+                color: #1e3a6e;
+                border: 1px solid #cfe0ff;
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton#NeutralButton:hover { background: #eaf1ff; border-color: #1a56db; color: #1a56db; }
+            QPushButton#NeutralButton:disabled { background: #eef4ff; color: #9aa8c3; border-color: #d9e6ff; }
+            QPushButton#ExportButton {
+                background: #1a56db;
+                color: #ffffff;
+                border: 1px solid #1a56db;
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QPushButton#ExportButton:hover { background: #174bbf; border-color: #174bbf; }
+            QLabel { background: transparent; border: none; color: #1e3a6e; }
+        """
     return """
         QWidget { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI'; }
         QFrame#ActivityHeader, QFrame#ActivityToolbar {
@@ -1556,6 +1791,24 @@ def _page_qss() -> str:
 
 
 def _tabs_qss() -> str:
+    if _is_light():
+        return """
+            QTabWidget::pane { border: none; background: transparent; margin-top: 8px; }
+            QTabBar { qproperty-drawBase: 0; background: transparent; }
+            QTabBar::tab {
+                background: #ffffff;
+                color: #5570a9;
+                border: 1px solid #cfe0ff;
+                padding: 7px 14px;
+                margin-right: 4px;
+                border-radius: 9px;
+                font-size: 11px;
+                font-weight: 700;
+                min-width: 104px;
+            }
+            QTabBar::tab:selected { background: #1a56db; color: #ffffff; border-color: #1a56db; }
+            QTabBar::tab:hover:!selected { background: #eaf1ff; color: #1a56db; border-color: #1a56db; }
+        """
     return """
         QTabWidget::pane { border: 1px solid #26334d; border-radius: 10px; background: #111827; }
         QTabBar { qproperty-drawBase: 0; }
@@ -1570,62 +1823,138 @@ def _tabs_qss() -> str:
 
 
 def _table_qss() -> str:
+    if _is_light():
+        return """
+            QTableView {
+                background: #ffffff;
+                alternate-background-color: #ffffff;
+                color: #1e3a6e;
+                border: 2px solid #9fbef2;
+                border-radius: 12px;
+                gridline-color: transparent;
+                font-size: 11px;
+                selection-background-color: #c7dcff;
+                selection-color: #0f3473;
+            }
+            QTableView::viewport { background: #ffffff; border: none; }
+            QTableView::item { border: none; padding: 2px 6px; }
+            QTableView::item:selected { background: #c7dcff; color: #0f3473; }
+            QTableView::item:focus { outline: none; border: none; }
+            QHeaderView::section {
+                background: #eaf1ff;
+                color: #5570a9;
+                border: none;
+                border-right: 1px solid #d4e3ff;
+                border-bottom: 1px solid #b8cff8;
+                padding: 7px 9px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QHeaderView::section:hover { background: #dbeafe; color: #1a56db; }
+            QTableCornerButton::section { background: #eaf1ff; border: none; border-bottom: 1px solid #b8cff8; }
+            QScrollBar:vertical { background: #eef4ff; width: 8px; margin: 2px 2px 2px 0px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #8faee6; border-radius: 4px; min-height: 36px; }
+            QScrollBar::handle:vertical:hover { background: #6f8fd3; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #eef4ff; }
+            QScrollBar:horizontal { background: #eef4ff; height: 8px; margin: 0px 2px 2px 2px; border-radius: 4px; }
+            QScrollBar::handle:horizontal { background: #8faee6; border-radius: 4px; min-width: 36px; }
+            QScrollBar::handle:horizontal:hover { background: #6f8fd3; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
+            QScrollBar::add-page:horizontal { background: #eef4ff; }
+            QScrollBar::sub-page:horizontal { background: #eef4ff; }
+        """
     return """
         QTableView {
             background: #0f172a;
-            alternate-background-color: #111c2e;
+            alternate-background-color: #0f172a;
             color: #dbeafe;
-            border: 1px solid #26334d;
-            border-radius: 8px;
+            border: 2px solid #40506f;
+            border-radius: 12px;
             gridline-color: transparent;
             font-size: 11px;
-            selection-background-color: #0e7490;
+            selection-background-color: #164e63;
             selection-color: white;
         }
-        QTableView::item {
-            border: none;
-            padding: 2px 6px;
-        }
-        QTableView::item:focus {
-            outline: none;
-            border: none;
-        }
+        QTableView::viewport { background: #0f172a; border: none; }
+        QTableView::item { border: none; padding: 2px 6px; }
+        QTableView::item:selected { background: #164e63; color: #ffffff; }
+        QTableView::item:focus { outline: none; border: none; }
         QHeaderView::section {
             background: #0b1220;
-            color: #cbd5e1;
+            color: #dbeafe;
             border: none;
-            border-right: 1px solid #1e293b;
-            border-bottom: 1px solid #26334d;
+            border-right: 1px solid #26334d;
+            border-bottom: 1px solid #34435f;
             padding: 7px 9px;
             font-size: 11px;
             font-weight: 800;
         }
-        QTableCornerButton::section {
-            background: #0b1220;
-            border: none;
-            border-bottom: 1px solid #26334d;
-        }
-        QScrollBar:vertical {
-            background: #0b1220; width: 8px; margin: 2px 1px 2px 0px; border-radius: 4px;
-        }
-        QScrollBar::handle:vertical {
-            background: rgba(100,116,139,0.50); border-radius: 4px; min-height: 36px;
-        }
+        QTableCornerButton::section { background: #0b1220; border: none; border-bottom: 1px solid #34435f; }
+        QScrollBar:vertical { background: #0b1220; width: 8px; margin: 2px 2px 2px 0px; border-radius: 4px; }
+        QScrollBar::handle:vertical { background: rgba(100,116,139,0.50); border-radius: 4px; min-height: 36px; }
         QScrollBar::handle:vertical:hover { background: rgba(148,163,184,0.62); }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-            height: 0px; background: transparent;
-        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: transparent; }
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #0b1220; }
-
-        QScrollBar:horizontal {
-            background: #0b1220; height: 8px; margin: 0px 2px 1px 2px; border-radius: 4px;
-        }
-        QScrollBar::handle:horizontal {
-            background: rgba(100,116,139,0.45); border-radius: 4px; min-width: 36px;
-        }
+        QScrollBar:horizontal { background: #0b1220; height: 8px; margin: 0px 2px 2px 2px; border-radius: 4px; }
+        QScrollBar::handle:horizontal { background: rgba(100,116,139,0.45); border-radius: 4px; min-width: 36px; }
         QScrollBar::handle:horizontal:hover { background: rgba(148,163,184,0.60); }
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-            width: 0px; background: transparent;
-        }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: transparent; }
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: #0b1220; }
+    """
+
+
+def _download_success_dialog_qss() -> str:
+    if _is_light():
+        return """
+            QDialog { background: #ffffff; color: #1e3a6e; font-family: 'Segoe UI'; }
+            QLabel { background: transparent; border: none; color: #1e3a6e; }
+            QLabel#InfoIcon { background: #dbeafe; color: #1a56db; border: 1px solid #9fb7e5; border-radius: 20px; font-size: 20px; font-weight: 900; }
+            QLabel#DialogTitle { color: #123b7a; font-size: 13px; font-weight: 700; }
+            QLabel#DialogLabel { color: #5570a9; font-size: 11px; font-weight: 700; }
+            QLabel#FileNameLabel { color: #1e3a6e; font-size: 12px; font-weight: 600; background: #f8fbff; border: 1px solid #cfe0ff; border-radius: 8px; padding: 8px 10px; }
+            QTextEdit#PathDetails { background: #f8fbff; color: #1e3a6e; border: 1px solid #cfe0ff; border-radius: 8px; padding: 8px; font-size: 11px; selection-background-color: #dbeafe; }
+            QPushButton#DialogPrimaryButton { background: #1a56db; color: #ffffff; border: 1px solid #1a56db; border-radius: 8px; padding: 8px 22px; font-size: 12px; font-weight: 800; min-width: 82px; }
+            QPushButton#DialogPrimaryButton:hover { background: #174bbf; border-color: #174bbf; }
+            QPushButton#DialogSecondaryButton { background: #f8fbff; color: #1e3a6e; border: 1px solid #cfe0ff; border-radius: 8px; padding: 8px 16px; font-size: 12px; font-weight: 800; min-width: 132px; }
+            QPushButton#DialogSecondaryButton:hover { background: #eaf1ff; border-color: #1a56db; color: #1a56db; }
+        """
+    return """
+        QDialog { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI'; }
+        QLabel { background: transparent; border: none; color: #e2e8f0; }
+        QLabel#InfoIcon { background: #075985; color: #e0f2fe; border: 1px solid #06b6d4; border-radius: 20px; font-size: 20px; font-weight: 900; }
+        QLabel#DialogTitle { color: #f8fafc; font-size: 13px; font-weight: 700; }
+        QLabel#DialogLabel { color: #9fb0cc; font-size: 11px; font-weight: 700; }
+        QLabel#FileNameLabel { color: #dbeafe; font-size: 12px; font-weight: 600; background: #111827; border: 1px solid #26334d; border-radius: 8px; padding: 8px 10px; }
+        QTextEdit#PathDetails { background: #0b1220; color: #dbeafe; border: 1px solid #334155; border-radius: 8px; padding: 8px; font-size: 11px; selection-background-color: #0e7490; }
+        QPushButton#DialogPrimaryButton { background: #334155; color: #f8fafc; border: 1px solid #64748b; border-radius: 8px; padding: 8px 22px; font-size: 12px; font-weight: 800; min-width: 82px; }
+        QPushButton#DialogPrimaryButton:hover { background: #0891b2; border: 1px solid #22d3ee; color: #ffffff; }
+        QPushButton#DialogPrimaryButton:pressed { background: #0e7490; border: 1px solid #67e8f9; }
+        QPushButton#DialogSecondaryButton { background: #172033; color: #dbeafe; border: 1px solid #334155; border-radius: 8px; padding: 8px 16px; font-size: 12px; font-weight: 800; min-width: 132px; }
+        QPushButton#DialogSecondaryButton:hover { background: #1e3a5f; border: 1px solid #38bdf8; color: #ffffff; }
+        QPushButton#DialogSecondaryButton:pressed { background: #075985; border: 1px solid #67e8f9; }
+    """
+
+
+def _activity_workbook_dialog_qss() -> str:
+    if _is_light():
+        return """
+            QDialog { background-color: #ffffff; color: #1e3a6e; }
+            QLabel#Title { color: #123b7a; font-size: 18px; font-weight: 800; }
+            QLabel#Body { color: #1e3a6e; font-size: 13px; }
+            QTextEdit { background-color: #f8fbff; color: #1e3a6e; border: 1px solid #cfe0ff; border-radius: 10px; padding: 8px; selection-background-color: #dbeafe; }
+            QPushButton { background-color: #f8fbff; color: #1e3a6e; border: 1px solid #cfe0ff; border-radius: 10px; padding: 8px 18px; font-weight: 700; }
+            QPushButton:hover { background-color: #eaf1ff; border: 1px solid #1a56db; color: #1a56db; }
+            QPushButton#PrimaryButton { background-color: #1a56db; color: #ffffff; border: 1px solid #1a56db; }
+            QPushButton#PrimaryButton:hover { background-color: #174bbf; border: 1px solid #174bbf; color: #ffffff; }
+        """
+    return """
+        QDialog { background-color: #0f172a; color: #e5eefc; }
+        QLabel#Title { color: #f8fafc; font-size: 18px; font-weight: 800; }
+        QLabel#Body { color: #dbeafe; font-size: 13px; }
+        QTextEdit { background-color: #111c2e; color: #dbeafe; border: 1px solid #334155; border-radius: 10px; padding: 8px; selection-background-color: #0891b2; }
+        QPushButton { background-color: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 10px; padding: 8px 18px; font-weight: 700; }
+        QPushButton:hover { background-color: #26364d; border: 1px solid #22d3ee; color: #ffffff; }
+        QPushButton#PrimaryButton { background-color: #0891b2; border: 1px solid #22d3ee; }
+        QPushButton#PrimaryButton:hover { background-color: #06b6d4; border: 1px solid #67e8f9; }
     """

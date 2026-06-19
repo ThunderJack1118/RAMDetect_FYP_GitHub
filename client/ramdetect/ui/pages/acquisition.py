@@ -43,6 +43,7 @@ from ui.widgets.progress_stepper      import ProgressStepper
 from ui.bridge.session                import AppState
 from ui.bridge.config_bridge          import Config
 from ui.bridge.acquisition_bridge     import AcquisitionBridge
+from ui.style_helpers import refresh_style, set_role, set_tone, set_variant, set_state
 
 # Try to get total physical RAM for size estimate during acquisition
 try:
@@ -71,6 +72,32 @@ def _short_middle(value: str, max_chars: int = 72) -> str:
     left = max(12, keep // 2)
     right = max(12, keep - left)
     return f"{value[:left]}...{value[-right:]}"
+
+
+def _compact_dump_path(value: str, max_chars: int = 72) -> str:
+    """Compact one-line path for the acquisition monitor.
+
+    The full path stays in the tooltip. The visible text intentionally keeps only
+    the front key directory context and the final .dmp filename so the Path card
+    does not wrap, overlap SHA-256, or disturb the right-panel spacing.
+    """
+    value = _normalize_path(str(value or "—"))
+    if value == "—":
+        return value
+
+    parts = [p for p in value.split("/") if p]
+    filename = parts[-1] if parts else value
+    filename = _short_middle(filename, 42)
+
+    if len(value) <= max_chars:
+        return value
+
+    # Example: C:/Users/annsi/Downloads/.../DESKTOP-...dmp
+    lead = "/".join(parts[:4]) if len(parts) >= 4 else "/".join(parts[:-1])
+    display = f"{lead}/.../{filename}" if lead else f".../{filename}"
+    if len(display) <= max_chars:
+        return display
+    return _short_middle(display, max_chars)
 
 
 def _short_hash(value: str, left: int = 16, right: int = 16) -> str:
@@ -404,10 +431,9 @@ class _DTBDetectWorker(threading.Thread):
 
 def _card(radius: int = 12) -> QFrame:
     f = QFrame()
-    f.setStyleSheet(
-        f"QFrame {{ background: rgba(30,41,59,0.45);"
-        f"  border: none; border-radius: {radius}px; }}"
-    )
+    f.setFrameShape(QFrame.NoFrame)
+    f.setAttribute(Qt.WA_StyledBackground, True)
+    set_role(f, "card")
     return f
 
 
@@ -415,7 +441,9 @@ def _lbl(text, size=12, bold=False, color="#94a3b8", mono=False) -> QLabel:
     l = QLabel(text)
     family = "Courier New" if mono else "Segoe UI"
     l.setFont(QFont(family, size, QFont.Bold if bold else QFont.Normal))
-    l.setStyleSheet(f"color: {color}; background: transparent;")
+    set_tone(l, color)
+    if mono:
+        l.setProperty("role", "mono")
     return l
 
 
@@ -439,6 +467,8 @@ class _ModeCard(QFrame):
     def __init__(self, icon: str, title: str, desc: str, parent=None):
         super().__init__(parent)
         self.setFixedHeight(90)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self._selected = False
 
@@ -456,10 +486,17 @@ class _ModeCard(QFrame):
         col.setSpacing(2)
         tl = QLabel(title)
         tl.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        tl.setStyleSheet("background: transparent; border: none; color: #ffffff;")
+        set_tone(tl, "#ffffff")
         dl = QLabel(desc)
-        dl.setFont(QFont("Segoe UI", 11))
-        dl.setStyleSheet("background: transparent; border: none; color: #94a3b8;")
+        # Slightly smaller subtitle prevents the Load File text from being
+        # clipped on high-DPI screens while preserving the existing card size.
+        dl.setFont(QFont("Segoe UI", 9))
+        dl.setTextFormat(Qt.PlainText)
+        dl.setWordWrap(False)
+        dl.setToolTip(desc)
+        dl.setMinimumWidth(0)
+        dl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        set_tone(dl, "#94a3b8")
         col.addWidget(tl)
         col.addWidget(dl)
         row.addLayout(col, stretch=1)
@@ -467,26 +504,10 @@ class _ModeCard(QFrame):
         self._apply(False)
 
     def _apply(self, sel: bool):
-        if sel:
-            self.setStyleSheet(
-                "QFrame { background: rgba(6,182,212,0.08);"
-                "  border: 2px solid #06b6d4; border-radius: 10px; }"
-                "QLabel { border: none; background: transparent; }"
-            )
-            self.icon_lbl.setStyleSheet(
-                "background: rgba(6,182,212,0.20); border: none;"
-                " border-radius: 22px; color: #06b6d4;"
-            )
-        else:
-            self.setStyleSheet(
-                "QFrame { background: rgba(30,41,59,0.5);"
-                "  border: 1px solid rgba(51,65,85,0.5); border-radius: 10px; }"
-                "QLabel { border: none; background: transparent; }"
-            )
-            self.icon_lbl.setStyleSheet(
-                "background: rgba(51,65,85,0.35); border: none;"
-                " border-radius: 22px; color: #94a3b8;"
-            )
+        self.setObjectName("ModeCard")
+        self.icon_lbl.setObjectName("ModeIcon")
+        set_state(self, "selected" if sel else "idle")
+        set_state(self.icon_lbl, "selected" if sel else "idle")
 
     def set_selected(self, v: bool):
         self._selected = v
@@ -544,22 +565,19 @@ class _ValidationCard(QFrame):
             head_c = "#f87171"
             head   = info.get("error", "Validation failed")
 
-        self.setStyleSheet(
-            f"QFrame {{ background: {bg}; border: 1px solid {border};"
-            f"  border-radius: 10px; }}"
-            f"QLabel {{ border: none; background: transparent; }}"
-        )
+        self.setObjectName("ValidationCard")
+        set_state(self, "valid" if valid else "invalid")
 
         # Header row
         hdr_row = QHBoxLayout()
         hdr_row.setSpacing(8)
         ic = QLabel(icon)
         ic.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        ic.setStyleSheet(f"color: {icon_c}; background: transparent;")
+        set_tone(ic, icon_c)
         hdr_row.addWidget(ic)
         hl = QLabel(head)
         hl.setFont(QFont("Courier New", 12, QFont.Bold))
-        hl.setStyleSheet(f"color: {head_c}; background: transparent;")
+        set_tone(hl, head_c)
         hl.setWordWrap(True)
         hdr_row.addWidget(hl, stretch=1)
         self._vb.addLayout(hdr_row)
@@ -619,7 +637,7 @@ class _OSProfileDialog(QDialog):
 
         title = QLabel("OS profile required before analysis")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #ffffff; background: transparent;")
+        set_tone(title, "#ffffff")
         vb.addWidget(title)
 
         hint = QLabel(
@@ -629,7 +647,7 @@ class _OSProfileDialog(QDialog):
         )
         hint.setFont(QFont("Segoe UI", 10))
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #94a3b8; background: transparent;")
+        set_tone(hint, "#94a3b8")
         vb.addWidget(hint)
 
         warn = QLabel("Choose the profile that matches the victim VM/host build, for example Windows 10 22H2 build 19045.")
@@ -643,7 +661,7 @@ class _OSProfileDialog(QDialog):
 
         label = QLabel("Windows profile")
         label.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        label.setStyleSheet("color: #cbd5e1; background: transparent;")
+        set_tone(label, "#cbd5e1")
         vb.addWidget(label)
 
         self.combo = QComboBox()
@@ -708,13 +726,13 @@ class _DTBPopupDialog(QDialog):
 
         title = QLabel("DTB / CR3 Metadata")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #ffffff; background: transparent;")
+        set_tone(title, "#ffffff")
         vb.addWidget(title)
 
         self.info = QLabel()
         self.info.setFont(QFont("Segoe UI", 10))
         self.info.setWordWrap(True)
-        self.info.setStyleSheet("color: #cbd5e1; background: transparent;")
+        set_tone(self.info, "#cbd5e1")
         vb.addWidget(self.info)
 
         self.status_card = QFrame()
@@ -730,7 +748,7 @@ class _DTBPopupDialog(QDialog):
         self.status_lbl.setWordWrap(True)
         self.status_sub = QLabel()
         self.status_sub.setFont(QFont("Segoe UI", 9))
-        self.status_sub.setStyleSheet("color: #94a3b8; background: transparent;")
+        set_tone(self.status_sub, "#94a3b8")
         self.status_sub.setWordWrap(True)
         card_v.addWidget(self.status_lbl)
         card_v.addWidget(self.status_sub)
@@ -772,21 +790,21 @@ class _DTBPopupDialog(QDialog):
 
         if dtb_hex:
             self.status_lbl.setText(f"DTB detected: {dtb_hex}")
-            self.status_lbl.setStyleSheet("color: #34d399; background: transparent;")
+            set_tone(self.status_lbl, "#34d399")
             self.status_sub.setText(
                 "The JSON sidecar already contains DTB / CR3 metadata. You may re-detect if needed."
             )
             self.run_btn.setText("Re-detect DTB")
         elif build:
             self.status_lbl.setText("DTB / CR3 not found in JSON metadata")
-            self.status_lbl.setStyleSheet("color: #facc15; background: transparent;")
+            set_tone(self.status_lbl, "#facc15")
             self.status_sub.setText(
                 "Run kernel metadata detection to resolve OS build and DTB/CR3, then write the result into the JSON sidecar."
             )
             self.run_btn.setText("Detect DTB")
         else:
             self.status_lbl.setText("DTB / CR3 not found in JSON metadata")
-            self.status_lbl.setStyleSheet("color: #facc15; background: transparent;")
+            set_tone(self.status_lbl, "#facc15")
             self.status_sub.setText(
                 "OS build can be resolved automatically. Run kernel metadata detection to update the sidecar JSON."
             )
@@ -852,12 +870,12 @@ class _ConvertPromptDialog(QDialog):
 
         mark = QLabel("•")
         mark.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        mark.setStyleSheet("color: #06b6d4;")
+        set_tone(mark, "#06b6d4")
         hr.addWidget(mark)
 
         title = QLabel("Convert memory dump - RAMDetect")
         title.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        title.setStyleSheet("color: #cbd5e1;")
+        set_tone(title, "#cbd5e1")
         hr.addWidget(title)
         hr.addStretch()
 
@@ -896,18 +914,18 @@ class _ConvertPromptDialog(QDialog):
 
         heading = QLabel("Convert memory dump")
         heading.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        heading.setStyleSheet("color: #ffffff;")
+        set_tone(heading, "#ffffff")
         text_col.addWidget(heading)
 
         desc = QLabel("RAMDetect needs a .dmp file for analysis.")
         desc.setFont(QFont("Segoe UI", 10))
-        desc.setStyleSheet("color: #cbd5e1;")
+        set_tone(desc, "#cbd5e1")
         desc.setWordWrap(True)
         text_col.addWidget(desc)
 
         fmt_lbl = QLabel(f"Selected format: <b>{fmt}</b>")
         fmt_lbl.setFont(QFont("Segoe UI", 10))
-        fmt_lbl.setStyleSheet("color: #e2e8f0;")
+        set_tone(fmt_lbl, "#e2e8f0")
         text_col.addWidget(fmt_lbl)
 
         question = QLabel(
@@ -915,7 +933,7 @@ class _ConvertPromptDialog(QDialog):
             "the configured session folder?"
         )
         question.setFont(QFont("Segoe UI", 10))
-        question.setStyleSheet("color: #e2e8f0;")
+        set_tone(question, "#e2e8f0")
         question.setWordWrap(True)
         text_col.addWidget(question)
 
@@ -989,6 +1007,8 @@ class AcquisitionPage(BasePage):
     def __init__(self, main_window, parent=None):
         # BasePage sets up the HeaderBar + self.body; pass show_dashboard=True
         super().__init__(main_window, show_dashboard=True)
+        self.setObjectName("AcquisitionPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.mw          = main_window
         self._mode       = "file"          # default to file (safer)
         self._validated  = False           # True once file passes validation
@@ -1052,7 +1072,7 @@ class AcquisitionPage(BasePage):
         mode_row = QHBoxLayout()
         mode_row.setSpacing(12)
         self.live_card = _ModeCard("💾", "Live System",  "Acquire RAM using DumpIt")
-        self.file_card = _ModeCard("📄", "Load File",    "Load existing .dmp / .mem / .raw file")
+        self.file_card = _ModeCard("📄", "Load File",    "Open .dmp / .mem / .raw file")
         self.file_card.set_selected(True)   # default = file mode
         self.live_card.mousePressEvent = lambda e: self._select_mode("live")
         self.file_card.mousePressEvent = lambda e: self._select_mode("file")
@@ -1107,11 +1127,16 @@ class AcquisitionPage(BasePage):
     )
 
     def _set_action_btn_enabled(self, enabled: bool):
-        """Set both the enabled state AND the inline stylesheet together."""
+        """Set the action state and let the active theme QSS draw the button.
+
+        Older versions used an inline dark gradient here. That blocked the light
+        theme from painting a proper disabled button, so the visual styling is
+        now kept in styles_dark.qss / styles_light.qss only.
+        """
         self.action_btn.setEnabled(enabled)
-        self.action_btn.setStyleSheet(
-            self._BTN_ENABLED_STYLE if enabled else self._BTN_DISABLED_STYLE
-        )
+        self.action_btn.setStyleSheet("")
+        set_variant(self.action_btn, "primary")
+        refresh_style(self.action_btn)
 
     def _set_profile_required_action(self):
         """Use the main action button to reopen the OS-profile popup.
@@ -1131,7 +1156,7 @@ class AcquisitionPage(BasePage):
 
     def _build_live_panel(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        set_role(w, "transparent")
         vb = QVBoxLayout(w)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(14)
@@ -1147,7 +1172,9 @@ class AcquisitionPage(BasePage):
         dumpit_row.addWidget(self.dumpit_input, stretch=1)
         browse_dumpit = QPushButton("📂")
         browse_dumpit.setObjectName("iconBtn")
-        browse_dumpit.setFixedSize(40, 40)
+        set_variant(browse_dumpit, "folderBrowse")
+        browse_dumpit.setFixedSize(46, 40)
+        browse_dumpit.setFont(QFont("Segoe UI Emoji", 13))
         browse_dumpit.setToolTip("Browse for DumpIt.exe")
         browse_dumpit.clicked.connect(self._browse_dumpit)
         dumpit_row.addWidget(browse_dumpit)
@@ -1161,7 +1188,9 @@ class AcquisitionPage(BasePage):
         outdir_row.addWidget(self.outdir_input, stretch=1)
         browse_out = QPushButton("📂")
         browse_out.setObjectName("iconBtn")
-        browse_out.setFixedSize(40, 40)
+        set_variant(browse_out, "folderBrowse")
+        browse_out.setFixedSize(46, 40)
+        browse_out.setFont(QFont("Segoe UI Emoji", 13))
         browse_out.setToolTip("Browse for output directory")
         browse_out.clicked.connect(self._browse_output_dir)
         outdir_row.addWidget(browse_out)
@@ -1173,7 +1202,7 @@ class AcquisitionPage(BasePage):
 
     def _build_file_panel(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        set_role(w, "transparent")
         vb = QVBoxLayout(w)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(12)
@@ -1190,7 +1219,9 @@ class AcquisitionPage(BasePage):
         file_outdir_row.addWidget(self.file_outdir_input, stretch=1)
         browse_file_out = QPushButton("📂")
         browse_file_out.setObjectName("iconBtn")
-        browse_file_out.setFixedSize(40, 40)
+        set_variant(browse_file_out, "folderBrowse")
+        browse_file_out.setFixedSize(46, 40)
+        browse_file_out.setFont(QFont("Segoe UI Emoji", 13))
         browse_file_out.setToolTip("Browse for destination directory")
         browse_file_out.clicked.connect(self._browse_file_output_dir)
         file_outdir_row.addWidget(browse_file_out)
@@ -1201,19 +1232,18 @@ class AcquisitionPage(BasePage):
         # index 1 — unified selected card (header + divider + detail grid)
         # index 2 — error bar (invalid file)
         self._file_stack = QStackedWidget()
+        self._file_stack.setObjectName("AcqFileStack")
         self._file_stack.setMinimumHeight(176)
         self._file_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         # ── Page 0: drop zone ─────────────────────────────────────────────────
         self.drop_zone = QFrame()
+        self.drop_zone.setObjectName("DropZone")
+        self.drop_zone.setAttribute(Qt.WA_StyledBackground, True)
         self.drop_zone.setMinimumHeight(120)
         self.drop_zone.setCursor(Qt.PointingHandCursor)
         self.drop_zone.setAcceptDrops(True)
-        self.drop_zone.setStyleSheet(
-            "QFrame { background: rgba(30,41,59,0.3);"
-            "  border: 2px dashed #334155; border-radius: 12px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        set_role(self.drop_zone, "dropZone")
         dz_vb = QVBoxLayout(self.drop_zone)
         dz_vb.setAlignment(Qt.AlignCenter)
         dz_vb.setSpacing(5)
@@ -1222,17 +1252,17 @@ class AcquisitionPage(BasePage):
         self._dz_icon = QLabel("📄")
         self._dz_icon.setFont(QFont("Segoe UI", 24))
         self._dz_icon.setAlignment(Qt.AlignCenter)
-        self._dz_icon.setStyleSheet("color: #64748b; background: transparent; border: none;")
+        set_tone(self._dz_icon, "#64748b")
 
         self._dz_text = QLabel("Drop file here  or  click to browse")
         self._dz_text.setFont(QFont("Segoe UI", 12))
         self._dz_text.setAlignment(Qt.AlignCenter)
-        self._dz_text.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._dz_text, "#94a3b8")
 
         dz_fmt = QLabel(".dmp  ·  .mem  ·  .raw")
         dz_fmt.setFont(QFont("Segoe UI", 10))
         dz_fmt.setAlignment(Qt.AlignCenter)
-        dz_fmt.setStyleSheet("color: #64748b; background: transparent; border: none;")
+        set_tone(dz_fmt, "#64748b")
 
         dz_vb.addWidget(self._dz_icon)
         dz_vb.addWidget(self._dz_text)
@@ -1243,15 +1273,10 @@ class AcquisitionPage(BasePage):
 
         # ── Page 1: unified selected-file card ───────────────────────────────
         self._sel_card = QFrame()
+        self._sel_card.setFrameShape(QFrame.NoFrame)
+        self._sel_card.setAttribute(Qt.WA_StyledBackground, True)
         self._sel_card.setMinimumHeight(168)
         self._sel_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self._sel_card.setStyleSheet(
-            "QFrame#selCard { background: rgba(52,211,153,0.07);"
-            "  border: 2px solid rgba(52,211,153,0.40); border-radius: 12px; }"
-            "QFrame#selCard QLabel { border: none; background: transparent; }"
-            "QFrame#selSep  { background: rgba(52,211,153,0.25);"
-            "                  border: none; border-radius: 0px; }"
-        )
         self._sel_card.setObjectName("selCard")
         sel_vb = QVBoxLayout(self._sel_card)
         sel_vb.setContentsMargins(16, 14, 16, 14)
@@ -1261,49 +1286,54 @@ class AcquisitionPage(BasePage):
         top_row = QHBoxLayout()
         top_row.setSpacing(12)
         top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setAlignment(Qt.AlignVCenter)
 
         sel_tick = QLabel("✅")
         sel_tick.setFont(QFont("Segoe UI", 22))
         sel_tick.setFixedSize(36, 36)
         sel_tick.setAlignment(Qt.AlignCenter)
-        sel_tick.setStyleSheet("background: transparent; border: none;")
-        top_row.addWidget(sel_tick)
+        set_role(sel_tick, "transparent")
+        top_row.addWidget(sel_tick, alignment=Qt.AlignVCenter)
 
-        name_col = QVBoxLayout()
+        name_widget = QWidget()
+        set_role(name_widget, "transparent")
+        name_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        name_col = QVBoxLayout(name_widget)
         name_col.setSpacing(2)
         name_col.setContentsMargins(0, 0, 0, 0)
         self._sel_filename = QLabel("—")
-        self._sel_filename.setFont(QFont("Courier New", 11, QFont.DemiBold))
-        self._sel_filename.setStyleSheet(
-            "color: #34d399; background: transparent; border: none;"
-        )
-        self._sel_filename.setWordWrap(True)
-        self._sel_filename.setMinimumHeight(24)
-        self._sel_filename.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._sel_filename.setObjectName("SelectedDumpName")
+        # Slightly larger selected dump name while keeping the row aligned with
+        # the tick, DTB Ready, and Change buttons in both themes.
+        self._sel_filename.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
+        set_tone(self._sel_filename, "#34d399")
+        self._sel_filename.setWordWrap(False)
+        self._sel_filename.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # Do not cap the title too tightly; on 125%/150% DPI the text was
+        # vertically clipped while the DTB Ready and Change buttons stayed fine.
+        self._sel_filename.setMinimumHeight(26)
+        self._sel_filename.setMaximumHeight(36)
+        self._sel_filename.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._sel_filename.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sel_sizemeta = QLabel("—")
-        self._sel_sizemeta.setFont(QFont("Segoe UI", 10))
-        self._sel_sizemeta.setStyleSheet(
-            "color: #64748b; background: transparent; border: none;"
-        )
-        self._sel_sizemeta.setWordWrap(True)
+        self._sel_sizemeta.setFont(QFont("Segoe UI", 9))
+        set_tone(self._sel_sizemeta, "#64748b")
+        self._sel_sizemeta.setWordWrap(False)
+        self._sel_sizemeta.setMaximumHeight(22)
         name_col.addWidget(self._sel_filename)
         name_col.addWidget(self._sel_sizemeta)
-        top_row.addLayout(name_col, stretch=1)
+        top_row.addWidget(name_widget, stretch=1, alignment=Qt.AlignVCenter)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
+        btn_row.setAlignment(Qt.AlignVCenter)
 
         self._dtb_popup_btn = QPushButton("DTB")
         self._dtb_popup_btn.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-        self._dtb_popup_btn.setFixedHeight(34)
-        self._dtb_popup_btn.setMinimumWidth(104)
+        self._dtb_popup_btn.setFixedHeight(40)
+        self._dtb_popup_btn.setFixedWidth(112)
         self._dtb_popup_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._dtb_popup_btn.setStyleSheet(
-            "QPushButton { background: rgba(14,165,233,0.14);"
-            "  border: 1px solid rgba(14,165,233,0.45); border-radius: 8px; color: #38bdf8;"
-            "  padding: 0px 14px; text-align: center; }"
-            "QPushButton:hover { background: rgba(14,165,233,0.26); color: #ffffff; }"
-        )
+        set_variant(self._dtb_popup_btn, "info")
         self._dtb_popup_btn.clicked.connect(self._open_dtb_dialog)
         self._dtb_popup_btn.hide()
         btn_row.addWidget(self._dtb_popup_btn)
@@ -1312,15 +1342,10 @@ class AcquisitionPage(BasePage):
         # on high-DPI displays and made "Change" appear off-centre.
         self._change_btn = QPushButton("Change")
         self._change_btn.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-        self._change_btn.setFixedHeight(34)
-        self._change_btn.setMinimumWidth(118)
+        self._change_btn.setFixedHeight(40)
+        self._change_btn.setFixedWidth(102)
         self._change_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._change_btn.setStyleSheet(
-            "QPushButton { background: rgba(51,65,85,0.7);"
-            "  border: 1px solid #475569; border-radius: 8px; color: #94a3b8;"
-            "  padding: 0px 14px; text-align: center; }"
-            "QPushButton:hover { background: #475569; color: #ffffff; }"
-        )
+        set_variant(self._change_btn, "secondary")
         self._change_btn.clicked.connect(self._reset_file_state)
         btn_row.addWidget(self._change_btn)
 
@@ -1332,9 +1357,7 @@ class AcquisitionPage(BasePage):
         sep = QFrame()
         sep.setObjectName("selSep")
         sep.setFixedHeight(1)
-        sep.setStyleSheet(
-            "QFrame { background: rgba(52,211,153,0.25); border: none; }"
-        )
+        set_role(sep, "successSeparator")
         sel_vb.addSpacing(10)
         sel_vb.addWidget(sep)
         sel_vb.addSpacing(10)
@@ -1344,10 +1367,10 @@ class AcquisitionPage(BasePage):
             """Returns value QLabel; appends a key:value row to det_left/det_right."""
             k = QLabel(key + ":")
             k.setFont(QFont("Segoe UI", 10))
-            k.setStyleSheet("color: #64748b; background: transparent; border: none;")
+            set_tone(k, "#64748b")
             v = QLabel("—")
             v.setFont(QFont("Courier New" if mono else "Segoe UI", 10, QFont.DemiBold))
-            v.setStyleSheet("color: #cbd5e1; background: transparent; border: none;")
+            set_tone(v, "#cbd5e1")
             v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             v.setWordWrap(True)
             return k, v
@@ -1382,32 +1405,30 @@ class AcquisitionPage(BasePage):
 
         # ── Convert banner (shown only for non-.dmp files) ────────────────────
         self._conv_banner = QFrame()
+        self._conv_banner.setFrameShape(QFrame.NoFrame)
+        self._conv_banner.setAttribute(Qt.WA_StyledBackground, True)
         self._conv_banner.setMinimumHeight(72)
         self._conv_banner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._conv_banner.hide()
-        self._conv_banner.setStyleSheet(
-            "QFrame { background: rgba(250,204,21,0.07);"
-            "  border: 1px solid rgba(250,204,21,0.35); border-radius: 8px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        self._conv_banner.setObjectName("convBanner")
         conv_hl = QHBoxLayout(self._conv_banner)
         conv_hl.setContentsMargins(14, 10, 10, 10)
         conv_hl.setSpacing(10)
 
         conv_icon = QLabel("⚠")
         conv_icon.setFont(QFont("Segoe UI", 14))
-        conv_icon.setStyleSheet("color: #facc15; background: transparent; border: none;")
+        set_tone(conv_icon, "#facc15")
         conv_hl.addWidget(conv_icon)
 
         conv_text_col = QVBoxLayout()
         conv_text_col.setSpacing(2)
         self._conv_label = QLabel("This file is not in .dmp format")
         self._conv_label.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        self._conv_label.setStyleSheet("color: #facc15; background: transparent; border: none;")
+        set_tone(self._conv_label, "#facc15")
         self._conv_label.setWordWrap(True)
         self._conv_sub = QLabel("Convert to .dmp before analysis")
         self._conv_sub.setFont(QFont("Segoe UI", 9))
-        self._conv_sub.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._conv_sub, "#94a3b8")
         self._conv_sub.setWordWrap(True)
         conv_text_col.addWidget(self._conv_label)
         conv_text_col.addWidget(self._conv_sub)
@@ -1417,13 +1438,7 @@ class AcquisitionPage(BasePage):
         self._conv_btn.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
         self._conv_btn.setFixedHeight(34)
         self._conv_btn.setMinimumWidth(140)
-        self._conv_btn.setStyleSheet(
-            "QPushButton { background: rgba(250,204,21,0.18);"
-            "  border: 1px solid rgba(250,204,21,0.5); border-radius: 7px; color: #facc15; }"
-            "QPushButton:hover { background: rgba(250,204,21,0.30); color: #ffffff; }"
-            "QPushButton:disabled { background: rgba(51,65,85,0.4); color: #64748b;"
-            "  border-color: #334155; }"
-        )
+        set_variant(self._conv_btn, "warning")
         self._conv_btn.clicked.connect(self._do_convert)
         conv_hl.addWidget(self._conv_btn, alignment=Qt.AlignVCenter)
 
@@ -1432,32 +1447,30 @@ class AcquisitionPage(BasePage):
 
         # ── DTB detection banner (shown when build exists but dtb_hex is missing) ──
         self._dtb_banner = QFrame()
+        self._dtb_banner.setFrameShape(QFrame.NoFrame)
+        self._dtb_banner.setAttribute(Qt.WA_StyledBackground, True)
         self._dtb_banner.setMinimumHeight(74)
         self._dtb_banner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._dtb_banner.hide()
-        self._dtb_banner.setStyleSheet(
-            "QFrame { background: rgba(6,182,212,0.07);"
-            "  border: 1px solid rgba(6,182,212,0.35); border-radius: 8px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        self._dtb_banner.setObjectName("dtbBanner")
         dtb_hl = QHBoxLayout(self._dtb_banner)
         dtb_hl.setContentsMargins(14, 10, 10, 10)
         dtb_hl.setSpacing(10)
 
         dtb_icon = QLabel("🔑")
         dtb_icon.setFont(QFont("Segoe UI", 14))
-        dtb_icon.setStyleSheet("color: #06b6d4; background: transparent; border: none;")
+        set_tone(dtb_icon, "#06b6d4")
         dtb_hl.addWidget(dtb_icon)
 
         dtb_text_col = QVBoxLayout()
         dtb_text_col.setSpacing(2)
         self._dtb_label = QLabel("DTB/CR3 not found in metadata")
         self._dtb_label.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        self._dtb_label.setStyleSheet("color: #06b6d4; background: transparent; border: none;")
+        set_tone(self._dtb_label, "#06b6d4")
         self._dtb_label.setWordWrap(True)
         self._dtb_sub = QLabel("Run kernel metadata detection before analysis for raw/VMEM-style dumps.")
         self._dtb_sub.setFont(QFont("Segoe UI", 9))
-        self._dtb_sub.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._dtb_sub, "#94a3b8")
         self._dtb_sub.setWordWrap(True)
         dtb_text_col.addWidget(self._dtb_label)
         dtb_text_col.addWidget(self._dtb_sub)
@@ -1467,13 +1480,7 @@ class AcquisitionPage(BasePage):
         self._dtb_btn.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
         self._dtb_btn.setFixedHeight(34)
         self._dtb_btn.setMinimumWidth(120)
-        self._dtb_btn.setStyleSheet(
-            "QPushButton { background: rgba(6,182,212,0.18);"
-            "  border: 1px solid rgba(6,182,212,0.50); border-radius: 7px; color: #06b6d4; }"
-            "QPushButton:hover { background: rgba(6,182,212,0.30); color: #ffffff; }"
-            "QPushButton:disabled { background: rgba(51,65,85,0.4); color: #64748b;"
-            "  border-color: #334155; }"
-        )
+        set_variant(self._dtb_btn, "info")
         self._dtb_btn.clicked.connect(self._do_detect_dtb)
         dtb_hl.addWidget(self._dtb_btn, alignment=Qt.AlignVCenter)
 
@@ -1483,11 +1490,7 @@ class AcquisitionPage(BasePage):
         # ── Page 2: error bar ─────────────────────────────────────────────────
         self._err_bar = QFrame()
         self._err_bar.setMinimumHeight(80)
-        self._err_bar.setStyleSheet(
-            "QFrame { background: rgba(248,113,113,0.07);"
-            "  border: 2px dashed rgba(248,113,113,0.40); border-radius: 12px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        set_role(self._err_bar, "dangerCard")
         err_hl = QHBoxLayout(self._err_bar)
         err_hl.setContentsMargins(18, 0, 14, 0)
         err_hl.setSpacing(14)
@@ -1495,7 +1498,7 @@ class AcquisitionPage(BasePage):
         err_icon = QLabel("❌")
         err_icon.setFont(QFont("Segoe UI", 22))
         err_icon.setAlignment(Qt.AlignCenter)
-        err_icon.setStyleSheet("background: transparent; border: none;")
+        set_role(err_icon, "transparent")
         err_hl.addWidget(err_icon)
 
         err_text_col = QVBoxLayout()
@@ -1503,25 +1506,20 @@ class AcquisitionPage(BasePage):
         err_text_col.setAlignment(Qt.AlignVCenter)
         self._err_reason = QLabel("Invalid file")
         self._err_reason.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
-        self._err_reason.setStyleSheet(
-            "color: #f87171; background: transparent; border: none;"
-        )
+        set_tone(self._err_reason, "#f87171")
         self._err_reason.setWordWrap(True)
         err_hint = QLabel("Try a different file or check the format.")
         err_hint.setFont(QFont("Segoe UI", 10))
-        err_hint.setStyleSheet("color: #64748b; background: transparent; border: none;")
+        set_tone(err_hint, "#64748b")
         err_text_col.addWidget(self._err_reason)
         err_text_col.addWidget(err_hint)
         err_hl.addLayout(err_text_col, stretch=1)
 
-        retry_btn = QPushButton("↺  Retry")
-        retry_btn.setFont(QFont("Segoe UI", 10))
-        retry_btn.setFixedSize(80, 30)
-        retry_btn.setStyleSheet(
-            "QPushButton { background: rgba(51,65,85,0.7);"
-            "  border: 1px solid #475569; border-radius: 8px; color: #94a3b8; }"
-            "QPushButton:hover { background: #475569; color: #ffffff; }"
-        )
+        retry_btn = QPushButton("↺ Retry")
+        retry_btn.setObjectName("AcqRetryButton")
+        retry_btn.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+        retry_btn.setFixedSize(86, 30)
+        set_variant(retry_btn, "secondary")
         retry_btn.clicked.connect(self._reset_file_state)
         err_hl.addWidget(retry_btn, alignment=Qt.AlignVCenter)
 
@@ -1552,20 +1550,20 @@ class AcquisitionPage(BasePage):
         prof_icon = QLabel("⚠")
         prof_icon.setFont(QFont("Segoe UI", 15, QFont.Bold))
         prof_icon.setAlignment(Qt.AlignCenter)
-        prof_icon.setStyleSheet("color: #facc15; background: transparent; border: none;")
+        set_tone(prof_icon, "#facc15")
         prof_row.addWidget(prof_icon)
 
         prof_text_col = QVBoxLayout()
         prof_text_col.setSpacing(2)
         self._profile_label = QLabel("OS profile required before analysis")
         self._profile_label.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        self._profile_label.setStyleSheet("color: #facc15; background: transparent; border: none;")
+        set_tone(self._profile_label, "#facc15")
         self._profile_label.setWordWrap(True)
 
         self._profile_hint = QLabel("Select the Windows build so RAMDetect can save a sidecar JSON and load correct parsing offsets.")
         self._profile_hint.setFont(QFont("Segoe UI", 9))
         self._profile_hint.setWordWrap(True)
-        self._profile_hint.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._profile_hint, "#94a3b8")
 
         prof_text_col.addWidget(self._profile_label)
         prof_text_col.addWidget(self._profile_hint)
@@ -1575,11 +1573,7 @@ class AcquisitionPage(BasePage):
         self._profile_btn.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
         self._profile_btn.setFixedHeight(34)
         self._profile_btn.setMinimumWidth(150)
-        self._profile_btn.setStyleSheet(
-            "QPushButton { background: rgba(250,204,21,0.18);"
-            "  border: 1px solid rgba(250,204,21,0.50); border-radius: 8px; color: #facc15; }"
-            "QPushButton:hover { background: rgba(250,204,21,0.30); color: #ffffff; }"
-        )
+        set_variant(self._profile_btn, "warning")
         self._profile_btn.clicked.connect(self._open_profile_dialog)
         prof_row.addWidget(self._profile_btn, alignment=Qt.AlignVCenter)
         vb.addWidget(self._profile_panel)
@@ -1598,7 +1592,7 @@ class AcquisitionPage(BasePage):
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         vb = QVBoxLayout(card)
-        vb.setContentsMargins(22, 18, 22, 6)
+        vb.setContentsMargins(22, 18, 22, 10)
         vb.setSpacing(12)
 
         # Header
@@ -1607,18 +1601,16 @@ class AcquisitionPage(BasePage):
         hdr_row.addWidget(self._monitor_title)
         hdr_row.addStretch()
         self._duration_badge = QLabel("")
+        self._duration_badge.setObjectName("DurationBadge")
+        self._duration_badge.setAttribute(Qt.WA_StyledBackground, True)
         self._duration_badge.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self._duration_badge.setStyleSheet(
-            "background: rgba(6,182,212,0.12); color: #06b6d4;"
-            "border: 1px solid rgba(6,182,212,0.3); border-radius: 10px; padding: 2px 10px;"
-        )
         self._duration_badge.hide()
         hdr_row.addWidget(self._duration_badge)
         vb.addLayout(hdr_row)
 
         # ── Idle state ────────────────────────────────────────────────────────
         idle = QWidget()
-        idle.setStyleSheet("background: transparent;")
+        set_role(idle, "transparent")
         idle_outer = QVBoxLayout(idle)
         idle_outer.setAlignment(Qt.AlignCenter)
         idle_outer.setContentsMargins(0, 0, 0, 0)
@@ -1642,7 +1634,7 @@ class AcquisitionPage(BasePage):
 
         # ── Active state (live dump in progress) ──────────────────────────────
         active = QWidget()
-        active.setStyleSheet("background: transparent;")
+        set_role(active, "transparent")
         act_vb = QVBoxLayout(active)
         act_vb.setAlignment(Qt.AlignTop)
         act_vb.setContentsMargins(0, 0, 0, 0)
@@ -1651,7 +1643,7 @@ class AcquisitionPage(BasePage):
         self.pct_label = QLabel("0%")
         self.pct_label.setFont(QFont("Segoe UI", 44, QFont.Bold))
         self.pct_label.setAlignment(Qt.AlignCenter)
-        self.pct_label.setStyleSheet("color: #06b6d4; background: transparent;")
+        set_tone(self.pct_label, "#06b6d4")
         act_vb.addWidget(self.pct_label)
 
         self.prog_bar = QProgressBar()
@@ -1666,20 +1658,20 @@ class AcquisitionPage(BasePage):
         def _act_info_row(key: str) -> QLabel:
             """Creates a card row (label: value) and returns the value QLabel."""
             row = QFrame()
-            row.setStyleSheet(
-                "QFrame { background: rgba(51,65,85,0.30);"
-                "  border: 1px solid rgba(71,85,105,0.50); border-radius: 8px; }"
-                "QLabel { border: none; background: transparent; }"
-            )
+            row.setObjectName("AcqInfoRow")
+            row.setFrameShape(QFrame.NoFrame)
+            row.setAttribute(Qt.WA_StyledBackground, True)
+            row.setMinimumHeight(44)
+            row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             rl = QHBoxLayout(row)
-            rl.setContentsMargins(14, 10, 14, 10)
+            rl.setContentsMargins(14, 9, 14, 9)
             k_lbl = QLabel(key)
             k_lbl.setFont(QFont("Segoe UI", 10))
-            k_lbl.setStyleSheet("color: #64748b; background: transparent; border: none;")
+            set_tone(k_lbl, "#64748b")
             v_lbl = QLabel("—")
             v_lbl.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
             v_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            v_lbl.setStyleSheet("color: #06b6d4; background: transparent; border: none;")
+            set_tone(v_lbl, "#06b6d4")
             rl.addWidget(k_lbl)
             rl.addStretch()
             rl.addWidget(v_lbl)
@@ -1692,18 +1684,16 @@ class AcquisitionPage(BasePage):
 
         # ── Success state ─────────────────────────────────────────────────────
         succ = QWidget()
-        succ.setStyleSheet("background: transparent;")
+        set_role(succ, "transparent")
         succ_vb = QVBoxLayout(succ)
         succ_vb.setContentsMargins(0, 0, 0, 0)
-        succ_vb.setSpacing(8)
+        succ_vb.setSpacing(6)
 
         # Banner
         banner = QFrame()
-        banner.setStyleSheet(
-            "QFrame { background: rgba(52,211,153,0.10);"
-            "  border: 1px solid rgba(52,211,153,0.30); border-radius: 8px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        banner.setObjectName("AcqSuccessBanner")
+        banner.setFrameShape(QFrame.NoFrame)
+        banner.setAttribute(Qt.WA_StyledBackground, True)
         ban_row = QHBoxLayout(banner)
         ban_row.setContentsMargins(12, 8, 12, 8)
         ban_row.setSpacing(9)
@@ -1711,15 +1701,15 @@ class AcquisitionPage(BasePage):
         ban_icon = QLabel("✅")
         ban_icon.setFont(QFont("Segoe UI", 14))
         ban_icon.setAlignment(Qt.AlignCenter)
-        ban_icon.setStyleSheet("background: transparent; border: none;")
+        set_role(ban_icon, "transparent")
         ban_col = QVBoxLayout()
         ban_col.setSpacing(2)
         ban_title = QLabel("Acquisition Complete")
         ban_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        ban_title.setStyleSheet("color: #34d399; background: transparent; border: none;")
+        set_tone(ban_title, "#34d399")
         ban_sub = QLabel("Memory dump saved successfully")
         ban_sub.setFont(QFont("Segoe UI", 8))
-        ban_sub.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(ban_sub, "#94a3b8")
         ban_col.addWidget(ban_title)
         ban_col.addWidget(ban_sub)
         ban_row.addWidget(ban_icon)
@@ -1734,26 +1724,25 @@ class AcquisitionPage(BasePage):
             into clipped rows.
             """
             card = QFrame()
-            card.setMinimumHeight(44 if compact else 48)
-            card.setStyleSheet(
-                "QFrame { background: rgba(51,65,85,0.26);"
-                "  border: 1px solid rgba(71,85,105,0.46); border-radius: 8px; }"
-                "QLabel { border: none; background: transparent; }"
-            )
+            card.setObjectName("AcqResultCard")
+            card.setFrameShape(QFrame.NoFrame)
+            card.setAttribute(Qt.WA_StyledBackground, True)
+            card.setFixedHeight(44 if compact else 48)
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             cv = QVBoxLayout(card)
-            cv.setContentsMargins(12, 6, 12, 6)
-            cv.setSpacing(2)
+            cv.setContentsMargins(12, 5, 12, 5)
+            cv.setSpacing(1)
 
             lbl_key = QLabel(label_text)
             lbl_key.setFont(QFont("Segoe UI", 8))
-            lbl_key.setStyleSheet("color: #64748b; background: transparent; border: none;")
+            set_tone(lbl_key, "#64748b")
 
             lbl_val = QLabel("—")
             lbl_val.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-            lbl_val.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
+            set_tone(lbl_val, "#e2e8f0")
             lbl_val.setWordWrap(False)
             lbl_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            lbl_val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            lbl_val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
             cv.addWidget(lbl_key)
             cv.addWidget(lbl_val)
@@ -1772,18 +1761,26 @@ class AcquisitionPage(BasePage):
 
         ts_card,   self._succ_time = _info_card("Timestamp", compact=True)
         path_card, self._succ_path = _info_card("Path", compact=True)
-        self._succ_path.setFont(QFont("Consolas", 8))
-        self._succ_path.setStyleSheet(
-            "color: #94a3b8; background: transparent; border: none;"
-        )
+        # Show a compact, single-line path in the right monitor panel. The full
+        # path stays in the tooltip to avoid uneven card height and overlap with
+        # the SHA-256/MD5 cards.
+        path_card.setFixedHeight(46)
+        self._succ_path.setObjectName("AcqPathValue")
+        self._succ_path.setFont(QFont("Segoe UI", 8, QFont.DemiBold))
+        self._succ_path.setWordWrap(False)
+        self._succ_path.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._succ_path.setMinimumHeight(14)
+        self._succ_path.setMaximumHeight(18)
+        self._succ_path.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        set_tone(self._succ_path, "#64748b")
 
         sha_card,  self._succ_sha  = _info_card("SHA-256", compact=True)
         self._succ_sha.setFont(QFont("Consolas", 8))
-        self._succ_sha.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._succ_sha, "#94a3b8")
 
         md5_card,  self._succ_md5  = _info_card("MD5", compact=True)
         self._succ_md5.setFont(QFont("Consolas", 8))
-        self._succ_md5.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._succ_md5, "#94a3b8")
 
         succ_vb.addWidget(ts_card)
         succ_vb.addWidget(path_card)
@@ -1809,7 +1806,7 @@ class AcquisitionPage(BasePage):
         )
         self.continue_btn_inner = QPushButton("Proceed to Analysis  →")
         self.continue_btn_inner.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        self.continue_btn_inner.setFixedHeight(44)
+        self.continue_btn_inner.setFixedHeight(40)
         self.continue_btn_inner.setEnabled(True)
         self.continue_btn_inner.setStyleSheet(_PROCEED_STYLE)
         self.continue_btn_inner.clicked.connect(self._go_to_analysis)
@@ -1819,7 +1816,7 @@ class AcquisitionPage(BasePage):
 
         # ── Error state ───────────────────────────────────────────────────────
         err = QWidget()
-        err.setStyleSheet("background: transparent;")
+        set_role(err, "transparent")
         err_vb = QVBoxLayout(err)
         err_vb.setAlignment(Qt.AlignCenter)
         err_vb.setSpacing(10)
@@ -1945,15 +1942,11 @@ class AcquisitionPage(BasePage):
         if hasattr(self, "_sel_card"):
             self._sel_card.setMinimumHeight(168)
         self._file_stack.setCurrentIndex(0)
-        self.drop_zone.setStyleSheet(
-            "QFrame { background: rgba(30,41,59,0.3);"
-            "  border: 2px dashed #334155; border-radius: 12px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        set_role(self.drop_zone, "dropZone")
         self._dz_icon.setText("📄")
-        self._dz_icon.setStyleSheet("color: #64748b; background: transparent; border: none;")
+        set_tone(self._dz_icon, "#64748b")
         self._dz_text.setText("Drop file here  or  click to browse")
-        self._dz_text.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
+        set_tone(self._dz_text, "#94a3b8")
 
         self.action_btn.show()
 
@@ -1986,11 +1979,7 @@ class AcquisitionPage(BasePage):
             )
 
     def _drop_event(self, event):
-        self.drop_zone.setStyleSheet(
-            "QFrame { background: rgba(30,41,59,0.3);"
-            "  border: 2px dashed #334155; border-radius: 12px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
+        set_role(self.drop_zone, "dropZone")
         urls = event.mimeData().urls()
         if urls:
             self._load_file(urls[0].toLocalFile())
@@ -2228,7 +2217,9 @@ class AcquisitionPage(BasePage):
             self._last_file_info = info
             self._profile_required = bool(info.get("profile_required", False))
             # Populate the unified card labels
-            self._sel_filename.setText(info["filename"])
+            _display_filename = _short_middle(info["filename"], 44)
+            self._sel_filename.setText(_display_filename)
+            self._sel_filename.setToolTip(info["filename"])
             self._sel_sizemeta.setText(
                 f"{info.get('size_str','—')}  ·  {info.get('format','—')}"
             )
@@ -2737,9 +2728,10 @@ class AcquisitionPage(BasePage):
         self._succ_filename.setText(_short_middle(full_filename, 64))
         self._succ_filename.setToolTip(full_filename)
 
-        # Display a readable short path in the panel; keep the full path selectable
-        # through tooltip/copy interaction to avoid right-panel clipping.
-        self._succ_path.setText(_short_middle(full_path, 82))
+        # Display a compact path that keeps the front directory context and the
+        # final .dmp filename. The exact managed path remains available by
+        # hovering over the row.
+        self._succ_path.setText(_compact_dump_path(full_path, 66))
         self._succ_path.setToolTip(full_path)
 
         self._succ_size.setText(sess.dump_size_str or "—")
